@@ -1,0 +1,217 @@
+/**
+ * 
+ * LoginTracker colours
+ *
+ * FF9900	Orange
+ *
+ * 424242	Dark grey
+ * BCBCBC	Medium grey
+ * E9E9E9	Light grey
+ *
+ * 3299BB	Blue
+ */
+
+
+body{
+	background: #efefef;
+	padding-top: 2em;
+}
+
+
+a{ color: #3299BB; text-decoration: none; }
+a:hover{ color: #2C89A8; }
+
+
+div#box{
+	border: 1px solid #ccc;
+	background: url(../img/sidebar-bg.png) 0 0 repeat-y #fff;
+}
+
+
+div#header{
+	margin: 0 0 1em 0;
+	width: 1000px;
+	border-bottom: 4px solid #FF9900;
+	background: #fff;
+}
+
+div#header h1{
+	letter-spacing: -1px;
+	font-size: 200%;
+	font-weight: normal;
+	margin: 5px 0 5px 10px;
+	float: left;
+}
+
+div#header h1 a{
+	color: #424242;
+	text-decoration: none;
+}
+div#header h1 a:hover{
+	color: #000;
+}
+
+div#header input{
+	float: right;
+	margin: 1em;
+	padding: 3px 3px 3px 16px;
+	border: 1px solid #ccc;
+	background: url(../img/ico/search.png) 0 50% no-repeat #fff;
+}
+
+
+div#side, div#content{
+	padding-bottom: 1em;
+}
+
+div#side .grid_2{
+	text-align: center;
+}
+
+div#side span.stat-number{
+	font-size: 200%;
+}
+
+
+h3{
+	font-size: 110%;
+	letter-spacing: 0px;
+	margin: 0;
+	font-weight: bold;
+	color: #424242;
+}
+
+h3.block{
+	font-size: 105%;
+	background: #424242;
+	color: #fff;
+	padding: 2px 6px;
+	margin-bottom: 5px;
+}
+
+
+
+
+ul.menu{
+	margin: 5px 0;
+	padding: 0;
+	list-style: none;
+}
+ul.menu li{
+	margin: 0;
+	padding: 0;
+}
+ul.menu li a{
+	display: block;
+	float: left;
+	/*padding: 4px 12px;*/
+}
+
+
+/* Icon links */
+a.icon{
+	background-position: 0 45%;
+	background-repeat: no-repeat;
+	padding-left: 20px !important;
+	margin: 5px 0;
+}
+
+.i-current{ background-image: url(../img/ico/user-standard.png); }
+.i-student{ background-image: url(../img/ico/user-student.png); }
+.i-staff{ background-image: url(../img/ico/user-staff.png); }
+.i-duplicate{ background-image: url(../img/ico/user-duplicates.png); }
+.i-notification{ background-image: url(../img/ico/notification.png); }
+
+
+
+
+
+#throbber{
+	display: block;
+	position: absolute;
+	top: 2em;
+	right: 2em;
+	width: 20px;
+	height: 20px;
+	content: "";
+}
+.loading {
+	background: url("../img/loading.gif") no-repeat 50% 50%;
+}
+
+
+
+
+
+/** JBar **/
+.jbar{
+	width:100%;
+	position:fixed;
+	filter:progid:DXImageTransform.Microsoft.Alpha(opacity=95); 
+	opacity: 0.95;
+	-moz-opacity: 0.95;
+	text-align:center;
+	left:0px;
+	z-index:9999999;
+	margin:0px;
+	padding:.35em;
+}
+.jbar-top{
+	top:0px;
+}
+.jbar-bottom{
+	bottom:0px;
+	color:#777;
+}
+.jbar-content{
+	line-height:46px;
+	font-size: 18px;
+	font-family:'Lucida Grande',sans-serif;
+}
+
+
+.notification{ background-color: #4e9a06; color: #fff !important; }
+.notification.err{ background-color: #c00; color: #fff !important; }
+.notification.warn{ background-color: #edd400; color: #000 !important; }
+
+
+
+
+/** jqModal **/
+/* jqModal base Styling courtesy of;
+	Brice Burgess <bhb@iceburg.net> */
+
+/* The Window's CSS z-index value is respected (takes priority). If none is supplied,
+	the Window's z-index value will be set to 3000 by default (via jqModal.js). */
+
+.jqmWindow {
+	display: none;
+
+	position: fixed;
+	top: 17%;
+	left: 50%;
+
+	margin-left: -300px;
+	width: 600px;
+
+	background-color: #EEE;
+	color: #333;
+	border: 5px solid #babdb6;
+	padding: 12px;
+}
+
+.jqmOverlay { background-color: #000; }
+
+/* Background iframe styling for IE6. Prevents ActiveX bleed-through (<select> form elements, etc.) */
+* iframe.jqm {position:absolute;top:0;left:0;z-index:-1;
+	width: expression(this.parentNode.offsetWidth+'px');
+	height: expression(this.parentNode.offsetHeight+'px');
+}
+
+/* Fixed posistioning emulation for IE6
+	 Star selector used to hide definition from browsers other than IE6
+	 For valid CSS, use a conditional include instead */
+* html .jqmWindow {
+	 position: absolute;
+	 top: expression((document.documentElement.scrollTop || document.body.scrollTop) + Math.round(17 * (document.documentElement.offsetHeight || document.body.clientHeight) / 100) + 'px');
+}
