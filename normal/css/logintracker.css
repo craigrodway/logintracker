@@ -129,14 +129,15 @@ a.icon{
 #throbber{
 	display: block;
 	position: absolute;
-	top: 2em;
-	right: 2em;
-	width: 20px;
-	height: 20px;
-	content: "";
+	top: 10px;
+	right: 10px;
+	background-color: darkblue;
+	color: #fff !important;
+	z-index: 100;
+	padding: 2px 4px;
 }
 .loading {
-	background: url("../img/loading.gif") no-repeat 50% 50%;
+	/*background: url("../img/loading.gif") no-repeat 1px 1px;*/
 }
 
 

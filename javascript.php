@@ -14,6 +14,8 @@ $js['normal'] = array(
 	,'jquery.bar.custom.js'
 	,'jqModal.js'
 	,'../3rdparty/datatables/js/jquery.dataTables.min.js'
+	,'../3rdparty/glow/core/core.js'
+	,'../3rdparty/glow/widgets/widget-timetable-small.js'
 	,'sammy-0.6.2.js'
 	,'sammy.template.js'
 	,'sammy.title.js'
