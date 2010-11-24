@@ -2,22 +2,25 @@
 /**
  * Representation of a result from a query against the fDatabase class
  * 
- * @copyright  Copyright (c) 2007-2009 Will Bond
+ * @copyright  Copyright (c) 2007-2010 Will Bond
  * @author     Will Bond [wb] <will@flourishlib.com>
  * @license    http://flourishlib.com/license
  * 
  * @package    Flourish
  * @link       http://flourishlib.com/fResult
  * 
- * @version    1.0.0b8
- * @changes    1.0.0b8  Fixed a bug with decoding MSSQL national column when using an ODBC connection [wb, 2009-09-18]
- * @changes    1.0.0b7  Added the method ::unescape(), changed ::tossIfNoRows() to return the object for chaining [wb, 2009-08-12]
- * @changes    1.0.0b6  Fixed a bug where ::fetchAllRows() would throw a fNoRowsException [wb, 2009-06-30]
- * @changes    1.0.0b5  Added the method ::asObjects() to allow for returning objects instead of associative arrays [wb, 2009-06-23]
- * @changes    1.0.0b4  Fixed a bug with not properly converting SQL Server text to UTF-8 [wb, 2009-06-18]
- * @changes    1.0.0b3  Added support for Oracle, various bug fixes [wb, 2009-05-04]
- * @changes    1.0.0b2  Updated for new fCore API [wb, 2009-02-16]
- * @changes    1.0.0b   The initial implementation [wb, 2007-09-25]
+ * @version    1.0.0b11
+ * @changes    1.0.0b11  Backwards Compatibility Break - removed ODBC support [wb, 2010-07-31]
+ * @changes    1.0.0b10  Added IBM DB2 support [wb, 2010-04-13]
+ * @changes    1.0.0b9   Added support for prepared statements [wb, 2010-03-02]
+ * @changes    1.0.0b8   Fixed a bug with decoding MSSQL national column when using an ODBC connection [wb, 2009-09-18]
+ * @changes    1.0.0b7   Added the method ::unescape(), changed ::tossIfNoRows() to return the object for chaining [wb, 2009-08-12]
+ * @changes    1.0.0b6   Fixed a bug where ::fetchAllRows() would throw a fNoRowsException [wb, 2009-06-30]
+ * @changes    1.0.0b5   Added the method ::asObjects() to allow for returning objects instead of associative arrays [wb, 2009-06-23]
+ * @changes    1.0.0b4   Fixed a bug with not properly converting SQL Server text to UTF-8 [wb, 2009-06-18]
+ * @changes    1.0.0b3   Added support for Oracle, various bug fixes [wb, 2009-05-04]
+ * @changes    1.0.0b2   Updated for new fCore API [wb, 2009-02-16]
+ * @changes    1.0.0b    The initial implementation [wb, 2007-09-25]
  */
 class fResult implements Iterator
 {
@@ -174,7 +177,9 @@ class fResult implements Iterator
 				break;
 				
 			case 'mysqli':
-				mysqli_free_result($this->result);
+				if (is_resource($this->result)) {
+					mysqli_free_result($this->result);
+				}
 				break;
 				
 			case 'pgsql':
@@ -207,7 +212,10 @@ class fResult implements Iterator
 	 */
 	private function advanceCurrentRow()
 	{
-		switch ($this->database->getExtension()) {
+		$type      = $this->database->getType();
+		$extension = $this->database->getExtension();
+		
+		switch ($extension) {
 			case 'mssql':
 				$row = mssql_fetch_assoc($this->result);
 				if (!empty($row)) {
@@ -220,7 +228,11 @@ class fResult implements Iterator
 				break;
 				
 			case 'mysqli':
-				$row = mysqli_fetch_assoc($this->result);
+				if (is_object($this->result)) {
+					$row = mysqli_fetch_assoc($this->result);
+				} else {
+					$row = $this->result[$this->pointer];
+				}
 				break;
 				
 			case 'pgsql':
@@ -231,16 +243,17 @@ class fResult implements Iterator
 				$row = sqlite_fetch_array($this->result, SQLITE_ASSOC);
 				break;
 				
+			case 'ibm_db2':
 			case 'oci8':
-			case 'odbc':
 			case 'pdo':
 			case 'sqlsrv':
 				$row = $this->result[$this->pointer];
 				break;
 		}
 		
+		
 		// Fix uppercase column names to lowercase
-		if ($row && $this->database->getType() == 'oracle') {
+		if ($row && ($type == 'oracle' || ($type == 'db2' && $extension != 'ibm_db2'))) {
 			$new_row = array();
 			foreach ($row as $column => $value) {
 				$new_row[strtolower($column)] = $value;
@@ -250,14 +263,14 @@ class fResult implements Iterator
 		
 		// This is an unfortunate fix that required for databases that don't support limit
 		// clauses with an offset. It prevents unrequested columns from being returned.
-		if ($row && in_array($this->database->getType(), array('mssql', 'oracle'))) {
+		if ($row && in_array($type, array('mssql', 'oracle', 'db2'))) {
 			if ($this->untranslated_sql !== NULL && isset($row['flourish__row__num'])) {
 				unset($row['flourish__row__num']);
 			}	
 		}
 		
 		// This decodes the data coming out of MSSQL into UTF-8
-		if ($row && $this->database->getType() == 'mssql') {
+		if ($row && $type == 'mssql') {
 			if ($this->character_set) {
 				foreach ($row as $key => $value) {
 					if (!is_string($value) || strpos($key, 'fmssqln__') === 0 || isset($row['fmssqln__' . $key]) || preg_match('#[\x0-\x8\xB\xC\xE-\x1F]#', $value)) {
@@ -453,7 +466,7 @@ class fResult implements Iterator
 		}
 		
 		foreach ($row as $key => $value) {
-			if ($value == ' ') {
+			if ($value === ' ') {
 				$row[$key] = '';
 				trigger_error(
 					self::compose(
@@ -612,7 +625,7 @@ class fResult implements Iterator
 		
 		$this->pointer = $row;
 					
-		switch ($this->database->getExtension()) {
+		switch ($this->database->getExtension()) {			
 			case 'mssql':
 				$success = mssql_data_seek($this->result, $row);
 				break;
@@ -622,7 +635,11 @@ class fResult implements Iterator
 				break;
 				
 			case 'mysqli':
-				$success = mysqli_data_seek($this->result, $row);
+				if (is_object($this->result)) {
+					$success = mysqli_data_seek($this->result, $row);
+				} else {
+					$success = TRUE;
+				}
 				break;
 				
 			case 'pgsql':
@@ -633,8 +650,8 @@ class fResult implements Iterator
 				$success = sqlite_seek($this->result, $row);
 				break;
 				
+			case 'ibm_db2':
 			case 'oci8':
-			case 'odbc':
 			case 'pdo':
 			case 'sqlsrv':
 				// Do nothing since we already changed the pointer
@@ -753,7 +770,7 @@ class fResult implements Iterator
 	{
 		if (!$this->returned_rows && !$this->affected_rows) {
 			if ($message === NULL) {
-				$message = self::compose('No rows were returned or affected by the query');	
+				$message = 'No rows were returned or affected by the query';
 			}
 			throw new fNoRowsException($message);
 		}
@@ -808,7 +825,7 @@ class fResult implements Iterator
 
 
 /**
- * Copyright (c) 2007-2009 Will Bond <will@flourishlib.com>
+ * Copyright (c) 2007-2010 Will Bond <will@flourishlib.com>
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal

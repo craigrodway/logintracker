@@ -8,23 +8,30 @@
  * Please also note that using this class in a PUT or DELETE request will
  * cause the php://input stream to be consumed, and thus no longer available.
  * 
- * @copyright  Copyright (c) 2007-2009 Will Bond
+ * @copyright  Copyright (c) 2007-2010 Will Bond, others
  * @author     Will Bond [wb] <will@flourishlib.com>
+ * @author     Alex Leeds [al] <alex@kingleeds.com>
  * @license    http://flourishlib.com/license
  * 
  * @package    Flourish
  * @link       http://flourishlib.com/fRequest
  * 
- * @version    1.0.0b9
- * @changes    1.0.0b9  Updated class to use new fSession API [wb, 2009-10-23]
- * @changes    1.0.0b8  Casting to an integer or string in ::get() now properly casts when the `$key` isn't present in the request, added support for date, time, timestamp and `?` casts [wb, 2009-08-25] 
- * @changes    1.0.0b7  Fixed a bug with ::filter() not properly creating new `$_FILES` entries [wb, 2009-07-02]
- * @changes    1.0.0b6  ::filter() now works with empty prefixes and filtering the `$_FILES` superglobal has been fixed [wb, 2009-07-02]
- * @changes    1.0.0b5  Changed ::filter() so that it can be called multiple times for multi-level filtering [wb, 2009-06-02]
- * @changes    1.0.0b4  Added the HTML escaping functions ::encode() and ::prepare() [wb, 2009-05-27]
- * @changes    1.0.0b3  Updated class to use new fSession API [wb, 2009-05-08]
- * @changes    1.0.0b2  Added ::generateCSRFToken() from fCRUD::generateRequestToken() and ::validateCSRFToken() from fCRUD::validateRequestToken() [wb, 2009-05-08]
- * @changes    1.0.0b   The initial implementation [wb, 2007-06-14]
+ * @version    1.0.0b15
+ * @changes    1.0.0b15  Added documentation about `[sub-key]` syntax, added `[sub-key]` support to ::check() [wb, 2010-09-12]
+ * @changes    1.0.0b14  Rewrote ::set() to not require recursion for array syntax [wb, 2010-09-12]
+ * @changes    1.0.0b13  Fixed ::set() to work with `PUT` requests [wb, 2010-06-30]
+ * @changes    1.0.0b12  Fixed a bug with ::getBestAcceptLanguage() returning the second-best language [wb, 2010-05-27]
+ * @changes    1.0.0b11  Added ::isAjax() [al, 2010-03-15]
+ * @changes    1.0.0b10  Fixed ::get() to not truncate integers to the 32bit integer limit [wb, 2010-03-05]
+ * @changes    1.0.0b9   Updated class to use new fSession API [wb, 2009-10-23]
+ * @changes    1.0.0b8   Casting to an integer or string in ::get() now properly casts when the `$key` isn't present in the request, added support for date, time, timestamp and `?` casts [wb, 2009-08-25] 
+ * @changes    1.0.0b7   Fixed a bug with ::filter() not properly creating new `$_FILES` entries [wb, 2009-07-02]
+ * @changes    1.0.0b6   ::filter() now works with empty prefixes and filtering the `$_FILES` superglobal has been fixed [wb, 2009-07-02]
+ * @changes    1.0.0b5   Changed ::filter() so that it can be called multiple times for multi-level filtering [wb, 2009-06-02]
+ * @changes    1.0.0b4   Added the HTML escaping functions ::encode() and ::prepare() [wb, 2009-05-27]
+ * @changes    1.0.0b3   Updated class to use new fSession API [wb, 2009-05-08]
+ * @changes    1.0.0b2   Added ::generateCSRFToken() from fCRUD::generateRequestToken() and ::validateCSRFToken() from fCRUD::validateRequestToken() [wb, 2009-05-08]
+ * @changes    1.0.0b    The initial implementation [wb, 2007-06-14]
  */
 class fRequest
 {
@@ -39,6 +46,7 @@ class fRequest
 	const getBestAcceptLanguage = 'fRequest::getBestAcceptLanguage';
 	const getBestAcceptType     = 'fRequest::getBestAcceptType';
 	const getValid              = 'fRequest::getValid';
+	const isAjax                = 'fRequest::isAjax';
 	const isDelete              = 'fRequest::isDelete';
 	const isGet                 = 'fRequest::isGet';
 	const isPost                = 'fRequest::isPost';
@@ -90,21 +98,50 @@ class fRequest
 	/**
 	 * Indicated if the parameter specified is set in the `$_GET` or `$_POST` superglobals or in the post data of a `PUT` or `DELETE` request
 	 * 
-	 * @param  string $key  The key to check
+	 * @param  string $key  The key to check - array elements can be checked via `[sub-key]` syntax
 	 * @return boolean  If the parameter is set
 	 */
 	static public function check($key)
 	{
 		self::initPutDelete();
 		
-		return isset($_GET[$key]) || isset($_POST[$key]) || isset(self::$put_delete[$key]);
+		$array_dereference = NULL;
+		if (strpos($key, '[')) {
+			$bracket_pos       = strpos($key, '[');
+			$array_dereference = substr($key, $bracket_pos);
+			$key               = substr($key, 0, $bracket_pos);
+		}
+		
+		if (!isset($_GET[$key]) && !isset($_POST[$key]) && !isset(self::$put_delete[$key])) {
+			return FALSE;
+		}
+		
+		$values = array($_GET, $_POST, self::$put_delete);
+		
+		if ($array_dereference) {
+			preg_match_all('#(?<=\[)[^\[\]]+(?=\])#', $array_dereference, $array_keys, PREG_SET_ORDER);
+			$array_keys = array_map('current', $array_keys);
+			array_unshift($array_keys, $key);
+			foreach (array_slice($array_keys, 0, -1) as $array_key) {
+				foreach ($values as &$value) {
+					if (!is_array($value) || !isset($value[$array_key])) {
+						$value = NULL;
+					} else {
+						$value = $value[$array_key];
+					}
+				}
+			}
+			$key = end($array_keys);
+		}
+		
+		return isset($values[0][$key]) || isset($values[1][$key]) || isset($values[2][$key]);
 	}
 	
 	
 	/**
 	 * Gets a value from ::get() and passes it through fHTML::encode()
 	 * 
-	 * @param  string $key            The key to get the value of
+	 * @param  string $key            The key to get the value of - array elements can be accessed via `[sub-key]` syntax
 	 * @param  string $cast_to        Cast the value to this data type
 	 * @param  mixed  $default_value  If the parameter is not set in the `DELETE`/`PUT` post data, `$_POST` or `$_GET`, use this value instead
 	 * @return string  The encoded value
@@ -224,7 +261,7 @@ class fRequest
 	 * All text values are interpreted as UTF-8 string and appropriately
 	 * cleaned.
 	 * 
-	 * @param  string $key            The key to get the value of
+	 * @param  string $key            The key to get the value of - array elements can be accessed via `[sub-key]` syntax
 	 * @param  string $cast_to        Cast the value to this data type - see method description for details
 	 * @param  mixed  $default_value  If the parameter is not set in the `DELETE`/`PUT` post data, `$_POST` or `$_GET`, use this value instead. This value will get cast if a `$cast_to` is specified.
 	 * @return mixed  The value
@@ -234,12 +271,32 @@ class fRequest
 		self::initPutDelete();
 		
 		$value = $default_value;
+		
+		$array_dereference = NULL;
+		if (strpos($key, '[')) {
+			$bracket_pos       = strpos($key, '[');
+			$array_dereference = substr($key, $bracket_pos);
+			$key               = substr($key, 0, $bracket_pos);
+		}
+		
 		if (isset(self::$put_delete[$key])) {
 			$value = self::$put_delete[$key];
 		} elseif (isset($_POST[$key])) {
 			$value = $_POST[$key];
 		} elseif (isset($_GET[$key])) {
 			$value = $_GET[$key];
+		}
+		
+		if ($array_dereference) {
+			preg_match_all('#(?<=\[)[^\[\]]+(?=\])#', $array_dereference, $array_keys, PREG_SET_ORDER);
+			$array_keys = array_map('current', $array_keys);
+			foreach ($array_keys as $array_key) {
+				if (!is_array($value) || !isset($value[$array_key])) {
+					$value = $default_value;
+					break;
+				}
+				$value = $value[$array_key];
+			}
 		}
 		
 		// This allows for data_type? casts to allow NULL through
@@ -295,6 +352,10 @@ class fRequest
 			} else {
 				$value = TRUE;
 			}
+			
+		} elseif (($cast_to == 'int' || $cast_to == 'integer') && preg_match('#^-?\d+$#D', $value)) {
+			// If the cast is an integer and the value is digits, don't cast to prevent
+			// truncation due to 32 bit integer limits
 			
 		} elseif ($cast_to) {
 			settype($value, $cast_to);
@@ -358,7 +419,7 @@ class fRequest
 	/**
 	 * Gets a value from the `DELETE`/`PUT` post data, `$_POST` or `$_GET` superglobals (in that order), restricting to a specific set of values
 	 * 
-	 * @param  string $key           The key to get the value of
+	 * @param  string $key           The key to get the value of - array elements can be accessed via `[sub-key]` syntax
 	 * @param  array  $valid_values  The array of values that are permissible, if one is not selected, picks first
 	 * @return mixed  The value
 	 */
@@ -390,6 +451,17 @@ class fRequest
 		} else {
 			self::$put_delete = array();
 		}
+	}
+	
+	
+	/**
+	 * Indicates if the URL was accessed via an XMLHttpRequest
+	 * 
+	 * @return boolean  If the URL was accessed via an XMLHttpRequest
+	 */
+	static public function isAjax()
+	{
+		return isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) == 'xmlhttprequest';
 	}
 	
 	
@@ -481,6 +553,7 @@ class fRequest
 		settype($options, 'array');
 		
 		$items = self::processAcceptHeader($header);
+		reset($items);
 		
 		if (!$options) {
 			return key($items);		
@@ -522,7 +595,7 @@ class fRequest
 	/**
 	 * Gets a value from ::get() and passes it through fHTML::prepare()
 	 * 
-	 * @param  string $key            The key to get the value of
+	 * @param  string $key            The key to get the value of - array elements can be accessed via `[sub-key]` syntax
 	 * @param  string $cast_to        Cast the value to this data type
 	 * @param  mixed  $default_value  If the parameter is not set in the `DELETE`/`PUT` post data, `$_POST` or `$_GET`, use this value instead
 	 * @return string  The prepared value
@@ -591,26 +664,39 @@ class fRequest
 	/**
 	 * Sets a value into the appropriate `$_GET` or `$_POST` superglobal, or the local `PUT`/`DELETE` post data based on what HTTP method was used for the request
 	 * 
-	 * @param  string $key    The key to set the value to
+	 * @param  string $key    The key to set the value to - array elements can be modified via `[sub-key]` syntax
 	 * @param  mixed  $value  The value to set
 	 * @return void
 	 */
 	static public function set($key, $value)
 	{		
 		if (self::isPost()) {
-			$_POST[$key] = $value;	
-			return;
-		}
-		
-		if (self::isGet()) {
-			$_GET[$key] = $value;	
-			return;
-		}
-		
-		if (self::isDelete() || self::isDelete()) {
+			$tip =& $_POST;
+		} elseif (self::isGet()) {
+			$tip =& $_GET;
+		} elseif (self::isDelete() || self::isPut()) {
 			self::initPutDelete();
-			self::$put_delete[$key] = $value;	
-			return;
+			$tip =& self::$put_delete;
+		}
+		
+		if ($bracket_pos = strpos($key, '[')) {
+			$array_dereference = substr($key, $bracket_pos);
+			$key               = substr($key, 0, $bracket_pos);
+			
+			preg_match_all('#(?<=\[)[^\[\]]+(?=\])#', $array_dereference, $array_keys, PREG_SET_ORDER);
+			$array_keys = array_map('current', $array_keys);
+			array_unshift($array_keys, $key);
+			
+			foreach (array_slice($array_keys, 0, -1) as $array_key) {
+				if (!isset($tip[$array_key]) || !is_array($tip[$array_key])) {
+					$tip[$array_key] = array();
+				}
+				$tip =& $tip[$array_key];
+			}
+			$tip[end($array_keys)] = $value;
+			
+		} else {
+			$tip[$key] = $value;
 		}
 	}
 	
@@ -682,7 +768,7 @@ class fRequest
 
 
 /**
- * Copyright (c) 2007-2009 Will Bond <will@flourishlib.com>
+ * Copyright (c) 2007-2010 Will Bond <will@flourishlib.com>, others
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal

@@ -2,21 +2,25 @@
 /**
  * Representation of an unbuffered result from a query against the fDatabase class
  * 
- * @copyright  Copyright (c) 2007-2009 Will Bond
+ * @copyright  Copyright (c) 2007-2010 Will Bond
  * @author     Will Bond [wb] <will@flourishlib.com>
  * @license    http://flourishlib.com/license
  * 
  * @package    Flourish
  * @link       http://flourishlib.com/fUnbufferedResult
  * 
- * @version    1.0.0b7
- * @changes    1.0.0b7  Fixed a bug with decoding MSSQL national column when using an ODBC connection [wb, 2009-09-18]
- * @changes    1.0.0b6  Added the method ::unescape(), changed ::tossIfNoRows() to return the object for chaining [wb, 2009-08-12]
- * @changes    1.0.0b5  Added the method ::asObjects() to allow for returning objects instead of associative arrays [wb, 2009-06-23]
- * @changes    1.0.0b4  Fixed a bug with not properly converting SQL Server text to UTF-8 [wb, 2009-06-18]
- * @changes    1.0.0b3  Added support for Oracle, various bug fixes [wb, 2009-05-04]
- * @changes    1.0.0b2  Updated for new fCore API [wb, 2009-02-16]
- * @changes    1.0.0b   The initial implementation [wb, 2008-05-07]
+ * @version    1.0.0b11
+ * @changes    1.0.0b11  Fixed some bugs with the mysqli extension and prepared statements [wb, 2010-08-28]
+ * @changes    1.0.0b10  Backwards Compatibility Break - removed ODBC support [wb, 2010-07-31]
+ * @changes    1.0.0b9   Added IBM DB2 support [wb, 2010-04-13]
+ * @changes    1.0.0b8   Added support for prepared statements [wb, 2010-03-02]
+ * @changes    1.0.0b7   Fixed a bug with decoding MSSQL national column when using an ODBC connection [wb, 2009-09-18]
+ * @changes    1.0.0b6   Added the method ::unescape(), changed ::tossIfNoRows() to return the object for chaining [wb, 2009-08-12]
+ * @changes    1.0.0b5   Added the method ::asObjects() to allow for returning objects instead of associative arrays [wb, 2009-06-23]
+ * @changes    1.0.0b4   Fixed a bug with not properly converting SQL Server text to UTF-8 [wb, 2009-06-18]
+ * @changes    1.0.0b3   Added support for Oracle, various bug fixes [wb, 2009-05-04]
+ * @changes    1.0.0b2   Updated for new fCore API [wb, 2009-02-16]
+ * @changes    1.0.0b    The initial implementation [wb, 2008-05-07]
  */
 class fUnbufferedResult implements Iterator
 {
@@ -142,7 +146,21 @@ class fUnbufferedResult implements Iterator
 			return;
 		}
 		
+		// stdClass results are holders for prepared statements, so we don't
+		// want to free them since it would break fStatement
+		if ($this->result instanceof stdClass) {
+			if ($this->database->getExtension() == 'msyqli') {
+				$this->result->statement->free_result();
+			}
+			unset($this->result);
+			return;	
+		}
+		
 		switch ($this->database->getExtension()) {
+			case 'ibm_db2':
+				db2_free_result($this->result);
+				break;
+			
 			case 'mssql':
 				mssql_free_result($this->result);
 				break;
@@ -157,10 +175,6 @@ class fUnbufferedResult implements Iterator
 				
 			case 'oci8':
 				oci_free_statement($this->result);
-				break;
-				
-			case 'odbc':
-				odbc_free_result($this->result);
 				break;
 				
 			case 'pgsql':
@@ -205,7 +219,14 @@ class fUnbufferedResult implements Iterator
 	 */
 	private function advanceCurrentRow()
 	{
-		switch ($this->database->getExtension()) {
+		$type      = $this->database->getType();
+		$extension = $this->database->getExtension();
+		
+		switch ($extension) {
+			case 'ibm_db2':
+				$row = db2_fetch_assoc($this->result);
+				break;
+			
 			case 'mssql':
 				// For some reason the mssql extension will return an empty row even
 				// when now rows were returned, so we have to explicitly check for this
@@ -229,15 +250,29 @@ class fUnbufferedResult implements Iterator
 				break;
 				
 			case 'mysqli':
-				$row = mysqli_fetch_assoc($this->result);
+				if (!$this->result instanceof stdClass) {
+					$row = mysqli_fetch_assoc($this->result);
+				} else {
+					$meta = $this->result->statement->result_metadata();
+					$row_references = array();
+					while ($field = $meta->fetch_field()) {
+						$row_references[] = &$fetched_row[$field->name];
+					}
+
+					call_user_func_array(array($this->result->statement, 'bind_result'), $row_references);
+					$this->result->statement->fetch();
+					
+					$row = array();
+					foreach($fetched_row as $key => $val) {
+						$row[$key] = $val;
+					}
+					unset($row_references);
+					$meta->free_result();
+				}
 				break;
 				
 			case 'oci8':
 				$row = oci_fetch_assoc($this->result);
-				break;
-				
-			case 'odbc':
-				$row = odbc_fetch_array($this->result);
 				break;
 				
 			case 'pgsql':
@@ -249,7 +284,8 @@ class fUnbufferedResult implements Iterator
 				break;
 				
 			case 'sqlsrv':
-				$row = sqlsrv_fetch_array($this->result, SQLSRV_FETCH_ASSOC);
+				$resource = $this->result instanceof stdClass ? $this->result->statement : $this->result;
+				$row = sqlsrv_fetch_array($resource, SQLSRV_FETCH_ASSOC);
 				break;
 				
 			case 'pdo':
@@ -258,7 +294,7 @@ class fUnbufferedResult implements Iterator
 		}
 		
 		// Fix uppercase column names to lowercase
-		if ($row && $this->database->getType() == 'oracle') {
+		if ($row && ($type == 'oracle' || ($type == 'db2' && $extension != 'ibm_db2'))) {
 			$new_row = array();
 			foreach ($row as $column => $value) {
 				$new_row[strtolower($column)] = $value;
@@ -268,14 +304,14 @@ class fUnbufferedResult implements Iterator
 		
 		// This is an unfortunate fix that required for databases that don't support limit
 		// clauses with an offset. It prevents unrequested columns from being returned.
-		if ($row && ($this->database->getType() == 'mssql' || $this->database->getType() == 'oracle')) {
+		if ($row && in_array($type, array('mssql', 'oracle', 'db2'))) {
 			if ($this->untranslated_sql !== NULL && isset($row['flourish__row__num'])) {
 				unset($row['flourish__row__num']);
 			}	
 		}
 		
 		// This decodes the data coming out of MSSQL into UTF-8
-		if ($row && $this->database->getType() == 'mssql') {
+		if ($row && $type == 'mssql') {
 			if ($this->character_set) {
 				foreach ($row as $key => $value) {
 					if (!is_string($value) || strpos($key, '__flourish_mssqln_') === 0 || isset($row['fmssqln__' . $key]) || preg_match('#[\x0-\x8\xB\xC\xE-\x1F]#', $value)) {
@@ -678,7 +714,7 @@ class fUnbufferedResult implements Iterator
 
 
 /**
- * Copyright (c) 2007-2009 Will Bond <will@flourishlib.com>
+ * Copyright (c) 2007-2010 Will Bond <will@flourishlib.com>
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal

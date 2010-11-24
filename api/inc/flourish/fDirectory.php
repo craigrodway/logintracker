@@ -2,22 +2,27 @@
 /**
  * Represents a directory on the filesystem, also provides static directory-related methods
  * 
- * @copyright  Copyright (c) 2007-2009 Will Bond
+ * @copyright  Copyright (c) 2007-2010 Will Bond, others
  * @author     Will Bond [wb] <will@flourishlib.com>
+ * @author     Will Bond, iMarc LLC [wb-imarc] <will@imarc.net>
  * @license    http://flourishlib.com/license
  * 
  * @package    Flourish
  * @link       http://flourishlib.com/fDirectory
  * 
- * @version    1.0.0b8
- * @changes    1.0.0b8  Backwards Compatibility Break - renamed ::getFilesize() to ::getSize(), added ::move() [wb, 2009-12-16]
- * @changes    1.0.0b7  Fixed ::__construct() to throw an fValidationException when the directory does not exist [wb, 2009-08-21]
- * @changes    1.0.0b6  Fixed a bug where deleting a directory would prevent any future operations in the same script execution on a file or directory with the same path [wb, 2009-08-20]
- * @changes    1.0.0b5  Added the ability to skip checks in ::__construct() for better performance in conjunction with fFilesystem::createObject() [wb, 2009-08-06]
- * @changes    1.0.0b4  Refactored ::scan() to use the new fFilesystem::createObject() method [wb, 2009-01-21]
- * @changes    1.0.0b3  Added the $regex_filter parameter to ::scan() and ::scanRecursive(), fixed bug in ::scanRecursive() [wb, 2009-01-05]
- * @changes    1.0.0b2  Removed some unnecessary error suppresion operators [wb, 2008-12-11]
- * @changes    1.0.0b   The initial implementation [wb, 2007-12-21]
+ * @version    1.0.0b12
+ * @changes    1.0.0b12  Fixed ::scanRecursive() to not add duplicate entries for certain nested directory structures [wb, 2010-08-10]
+ * @changes    1.0.0b11  Fixed ::scan() to properly add trailing /s for directories [wb, 2010-03-16]
+ * @changes    1.0.0b10  BackwardsCompatibilityBreak - Fixed ::scan() and ::scanRecursive() to strip the current directory's path before matching, added support for glob style matching [wb, 2010-03-05]
+ * @changes    1.0.0b9   Changed the way directories deleted in a filesystem transaction are handled, including improvements to the exception that is thrown [wb+wb-imarc, 2010-03-05]
+ * @changes    1.0.0b8   Backwards Compatibility Break - renamed ::getFilesize() to ::getSize(), added ::move() [wb, 2009-12-16]
+ * @changes    1.0.0b7   Fixed ::__construct() to throw an fValidationException when the directory does not exist [wb, 2009-08-21]
+ * @changes    1.0.0b6   Fixed a bug where deleting a directory would prevent any future operations in the same script execution on a file or directory with the same path [wb, 2009-08-20]
+ * @changes    1.0.0b5   Added the ability to skip checks in ::__construct() for better performance in conjunction with fFilesystem::createObject() [wb, 2009-08-06]
+ * @changes    1.0.0b4   Refactored ::scan() to use the new fFilesystem::createObject() method [wb, 2009-01-21]
+ * @changes    1.0.0b3   Added the $regex_filter parameter to ::scan() and ::scanRecursive(), fixed bug in ::scanRecursive() [wb, 2009-01-05]
+ * @changes    1.0.0b2   Removed some unnecessary error suppresion operators [wb, 2008-12-11]
+ * @changes    1.0.0b    The initial implementation [wb, 2007-12-21]
  */
 class fDirectory
 {
@@ -91,18 +96,18 @@ class fDirectory
 	
 	
 	/**
+	 * A backtrace from when the file was deleted 
+	 * 
+	 * @var array
+	 */
+	protected $deleted = NULL;
+	
+	/**
 	 * The full path to the directory
 	 * 
 	 * @var string
 	 */
 	protected $directory;
-	
-	/**
-	 * An exception to be thrown after a deletion has happened
-	 * 
-	 * @var object
-	 */
-	protected $exception;
 	
 	
 	/**
@@ -142,12 +147,12 @@ class fDirectory
 		$directory = self::makeCanonical(realpath($directory));
 		
 		$this->directory =& fFilesystem::hookFilenameMap($directory);
-		$this->exception =& fFilesystem::hookExceptionMap($directory);
+		$this->deleted   =& fFilesystem::hookDeletedMap($directory);
 		
-		// If there is an exception and were not inside a transaction, but we've
-		// gotten to here, then the directory exists, so the exception must be outdated
-		if ($this->exception !== NULL && !fFilesystem::isInsideTransaction()) {
-			fFilesystem::updateExceptionMap($directory, NULL);
+		// If the directory is listed as deleted and we are not inside a transaction,
+		// but we've gotten to here, then the directory exists, so we can wipe the backtrace
+		if ($this->deleted !== NULL && !fFilesystem::isInsideTransaction()) {
+			fFilesystem::updateDeletedMap($directory, NULL);
 		}
 	}
 	
@@ -189,7 +194,9 @@ class fDirectory
 	 */
 	public function delete()
 	{
-		$this->tossIfException();
+		if ($this->deleted) {
+			return;	
+		}
 		
 		$files = $this->scan();
 		
@@ -204,10 +211,8 @@ class fDirectory
 		
 		rmdir($this->directory);
 		
-		$exception = new fProgrammerException(
-			'The action requested can not be performed because the directory has been deleted'
-		);
-		fFilesystem::updateExceptionMap($this->directory, $exception);
+		fFilesystem::updateDeletedMap($this->directory, debug_backtrace());
+		fFilesystem::updateFilenameMapForDirectory($this->directory, '*DELETED at ' . time() . ' with token ' . uniqid('', TRUE) . '* ' . $this->directory);
 	}
 	
 	
@@ -229,7 +234,7 @@ class fDirectory
 	 */
 	public function getParent()
 	{
-		$this->tossIfException();
+		$this->tossIfDeleted();
 		
 		$dirname = fFilesystem::getPathInfo($this->directory, 'dirname');
 		
@@ -254,7 +259,7 @@ class fDirectory
 	 */
 	public function getPath($translate_to_web_path=FALSE)
 	{
-		$this->tossIfException();
+		$this->tossIfDeleted();
 		
 		if ($translate_to_web_path) {
 			return fFilesystem::translateToWebPath($this->directory);
@@ -275,7 +280,7 @@ class fDirectory
 	 */
 	public function getSize($format=FALSE, $decimal_places=1)
 	{
-		$this->tossIfException();
+		$this->tossIfDeleted();
 		
 		$size = 0;
 		
@@ -299,7 +304,7 @@ class fDirectory
 	 */
 	public function isWritable()
 	{
-		$this->tossIfException();
+		$this->tossIfDeleted();
 		
 		return is_writable($this->directory);
 	}
@@ -352,7 +357,7 @@ class fDirectory
 	 */
 	public function rename($new_dirname, $overwrite)
 	{
-		$this->tossIfException();
+		$this->tossIfDeleted();
 		
 		if (!$this->getParent()->isWritable()) {
 			throw new fEnvironmentException(
@@ -412,27 +417,49 @@ class fDirectory
 	/**
 	 * Performs a [http://php.net/scandir scandir()] on a directory, removing the `.` and `..` entries
 	 * 
-	 * @param  string $regex_filter  A PCRE to filter files/directories by path, directories can be detected by checking for a trailing / (even on Windows)
+	 * If the `$filter` looks like a valid PCRE pattern - matching delimeters
+	 * (a delimeter can be any non-alphanumeric, non-backslash, non-whitespace
+	 * character) followed by zero or more of the flags `i`, `m`, `s`, `x`,
+	 * `e`, `A`, `D`,  `S`, `U`, `X`, `J`, `u` - then
+	 * [http://php.net/preg_match `preg_match()`] will be used.
+	 * 
+	 * Otherwise the `$filter` will do a case-sensitive match with `*` matching
+	 * zero or more characters and `?` matching a single character.
+	 * 
+	 * On all OSes (even Windows), directories will be separated by `/`s when
+	 * comparing with the `$filter`.
+	 * 
+	 * @param  string $filter  A PCRE or glob pattern to filter files/directories by path - directories can be detected by checking for a trailing / (even on Windows)
 	 * @return array  The fFile (or fImage) and fDirectory objects for the files/directories in this directory
 	 */
-	public function scan($regex_filter=NULL)
+	public function scan($filter=NULL)
 	{
-		$this->tossIfException();
+		$this->tossIfDeleted();
 		
-		$files = array_diff(scandir($this->directory), array('.', '..'));
+		$files   = array_diff(scandir($this->directory), array('.', '..'));
 		$objects = array();
 		
+		if ($filter && !preg_match('#^([^a-zA-Z0-9\\\\\s]).*\1[imsxeADSUXJu]*$#D', $filter)) {
+			$filter = '#^' . strtr(
+				preg_quote($filter, '#'),
+				array(
+					'\\*' => '.*',
+					'\\?' => '.'
+				)
+			) . '$#D';
+		}
+		
+		natcasesort($files);
+		
 		foreach ($files as $file) {
-			$file = $this->directory . $file;
-			
-			if ($regex_filter) {
-				$test_path = (is_dir($file)) ? $file . '/' : $file;
-				if (!preg_match($regex_filter, $test_path)) {
-					continue;	
+			if ($filter) {
+				$test_path = (is_dir($this->directory . $file)) ? $file . '/' : $file;
+				if (!preg_match($filter, $test_path)) {
+					continue;
 				}
 			}
 			
-			$objects[] = fFilesystem::createObject($file);
+			$objects[] = fFilesystem::createObject($this->directory . $file);
 		}
 		
 		return $objects;
@@ -442,28 +469,38 @@ class fDirectory
 	/**
 	 * Performs a **recursive** [http://php.net/scandir scandir()] on a directory, removing the `.` and `..` entries
 	 * 
-	 * @param  string $regex_filter  A PCRE to filter files/directories by path, directories can be detected by checking for a trailing / (even on Windows)
-	 * @return array  The fFile and fDirectory objects for the files/directory (listed recursively) in this directory
+	 * @param  string $filter  A PCRE or glob pattern to filter files/directories by path - see ::scan() for details
+	 * @return array  The fFile (or fImage) and fDirectory objects for the files/directories (listed recursively) in this directory
 	 */
-	public function scanRecursive($regex_filter=NULL)
+	public function scanRecursive($filter=NULL)
 	{
-		$this->tossIfException();
+		$this->tossIfDeleted();
 		
-		$files   = $this->scan();
-		$objects = $files;
+		$objects = $this->scan();
 		
-		$total_files = sizeof($files);
-		for ($i=0; $i < $total_files; $i++) {
-			if ($files[$i] instanceof fDirectory) {
-				array_splice($objects, $i+1, 0, $files[$i]->scanRecursive());
+		for ($i=0; $i < sizeof($objects); $i++) {
+			if ($objects[$i] instanceof fDirectory) {
+				array_splice($objects, $i+1, 0, $objects[$i]->scan());
 			}
 		}
 		
-		if ($regex_filter) {
-			$new_objects = array();
+		if ($filter) {
+			if (!preg_match('#^([^a-zA-Z0-9\\\\\s*?^$]).*\1[imsxeADSUXJu]*$#D', $filter)) {
+				$filter = '#^' . strtr(
+					preg_quote($filter, '#'),
+					array(
+						'\\*' => '.*',
+						'\\?' => '.'
+					)
+				) . '$#D';
+			}
+			
+			$new_objects  = array();
+			$strip_length = strlen($this->getPath());
 			foreach ($objects as $object) {
-				$test_path = ($object instanceof fDirectory) ? substr($object->getPath(), 0, -1) . '/' : $object->getPath();
-				if (!preg_match($regex_filter, $test_path)) {
+				$test_path = substr($object->getPath(), $strip_length);
+				$test_path = str_replace(DIRECTORY_SEPARATOR, '/', $test_path);
+				if (!preg_match($filter, $test_path)) {
 					continue;	
 				}	
 				$new_objects[] = $object;
@@ -476,14 +513,17 @@ class fDirectory
 	
 	
 	/**
-	 * Throws the directory exception if exists
+	 * Throws an exception if the directory has been deleted
 	 * 
 	 * @return void
 	 */
-	protected function tossIfException()
+	protected function tossIfDeleted()
 	{
-		if ($this->exception) {
-			throw $this->exception;
+		if ($this->deleted) {
+			throw new fProgrammerException(
+				"The action requested can not be performed because the directory has been deleted\n\nBacktrace for fDirectory::delete() call:\n%s",
+				fCore::backtrace(0, $this->deleted)
+			);
 		}
 	}
 }
@@ -491,7 +531,7 @@ class fDirectory
 
 
 /**
- * Copyright (c) 2007-2009 Will Bond <will@flourishlib.com>
+ * Copyright (c) 2007-2010 Will Bond <will@flourishlib.com>, others
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal

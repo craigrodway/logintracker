@@ -2,7 +2,7 @@
 /**
  * Holds a single instance of the fDatabase class and provides database manipulation functionality for ORM code
  * 
- * @copyright  Copyright (c) 2007-2009 Will Bond, others
+ * @copyright  Copyright (c) 2007-2010 Will Bond, others
  * @author     Will Bond [wb] <will@flourishlib.com>
  * @author     Craig Ruksznis, iMarc LLC [cr-imarc] <craigruk@imarc.net>
  * @license    http://flourishlib.com/license
@@ -10,7 +10,14 @@
  * @package    Flourish
  * @link       http://flourishlib.com/fORMDatabase
  * 
- * @version    1.0.0b20
+ * @version    1.0.0b27
+ * @changes    1.0.0b27  Fixed ::addWhereClause() to ignore fuzzy search clauses with no values to match [wb, 2010-10-19]
+ * @changes    1.0.0b26  Fixed ::insertFromAndGroupByClauses() to handle SQL where a table is references in more than one capitalization [wb, 2010-07-26]
+ * @changes    1.0.0b25  Fixed ::insertFromAndGroupByClauses() to properly handle recursive relationships [wb, 2010-07-22]
+ * @changes    1.0.0b24  Fixed ::parseSearchTerms() to work with non-ascii terms [wb, 2010-06-30]
+ * @changes    1.0.0b23  Fixed error messages in ::retrieve() [wb, 2010-04-23]
+ * @changes    1.0.0b22  Added support for IBM DB2, fixed an issue with building record sets or records that have recursive relationships [wb, 2010-04-13]
+ * @changes    1.0.0b21  Changed ::injectFromAndGroupByClauses() to be able to handle table aliases that contain other aliases inside of them [wb, 2010-03-03]
  * @changes    1.0.0b20  Fixed a bug where joining to a table two separate ways could cause table alias issues and incorrect SQL to be generated [wb, 2009-12-16]
  * @changes    1.0.0b19  Added the ability to compare columns with the `=:`, `!:`, `<:`, `<=:`, `>:` and `>=:` operators [wb, 2009-12-08]
  * @changes    1.0.0b18  Fixed a bug affecting where conditions with columns that are not null but have a default value [wb, 2009-11-03]
@@ -571,6 +578,12 @@ class fORMDatabase
 							$values = self::parseSearchTerms($values[0], TRUE);	
 						}
 						
+						// Skip fuzzy matches with no values to match
+						if ($values === array()) {
+							$params[0] .= ' 1 = 1 ';
+							continue;
+						}
+						
 						$condition = array();
 						foreach ($values as $value) {
 							$sub_condition = array();
@@ -706,7 +719,7 @@ class fORMDatabase
 				$table = $short_table;
 			}	
 		}
-		return $table;
+		return strtolower($table);
 	}
 	
 	
@@ -819,8 +832,13 @@ class fORMDatabase
 				'on_clause_fields' => array()
 			);
 			
-			$join['on_clause_fields'][] = $table_alias . '.' . $routes[$route]['column'];
-			$join['on_clause_fields'][] = $join['table_alias'] . '.' . $routes[$route]['related_column'];
+			if ($table != $related_table) {
+				$join['on_clause_fields'][] = $table_alias . '.' . $routes[$route]['column'];
+				$join['on_clause_fields'][] = $join['table_alias'] . '.' . $routes[$route]['related_column'];
+			} else {
+				$join['on_clause_fields'][] = $table_alias . '.' . $routes[$route]['related_column'];
+				$join['on_clause_fields'][] = $join['table_alias'] . '.' . $routes[$route]['column'];
+			}
 		
 			$joins[$table . '_' . $related_table . '{' . $route . '}'] = $join;
 		
@@ -884,9 +902,11 @@ class fORMDatabase
 	 * Finds all of the table names in the SQL and creates the appropriate `FROM` and `GROUP BY` clauses with all necessary joins
 	 * 
 	 * The SQL string should contain two placeholders, `:from_clause` and
-	 * `:group_by_clause`. All columns should be qualified with their full table
-	 * name. Here is an example SQL string to pass in presumming that the
-	 * tables users and groups are in a relationship:
+	 * `:group_by_clause`, although the later may be omitted if necessary. All
+	 * columns should be qualified with their full table name.
+	 * 
+	 * Here is an example SQL string to pass in presumming that the tables
+	 * users and groups are in a relationship:
 	 * 
 	 * {{{
 	 * SELECT users.* FROM :from_clause WHERE groups.group_id = 5 :group_by_clause ORDER BY lower(users.first_name) ASC
@@ -909,14 +929,6 @@ class fORMDatabase
 			throw new fProgrammerException(
 				'No %1$s placeholder was found in:%2$s',
 				':from_clause',
-				"\n" . $params[0]
-			);
-		}
-		
-		if (strpos($params[0], ':group_by_clause') === FALSE && !preg_match('#group\s+by#i', $params[0])) {
-			throw new fProgrammerException(
-				'No %1$s placeholder was found in:%2$s',
-				':group_by_clause',
 				"\n" . $params[0]
 			);
 		}
@@ -947,7 +959,6 @@ class fORMDatabase
 				// This removes quotes from around . in the {route} specified of a shorthand column name
 				$match = preg_replace('#(\{\w+)"\."(\w+\})#', '\1.\2', $match);
 				
-				//fCore::expose($match);
 				preg_match_all('#(?<!\w|"|=>)((?:"?((?:\w+"?\."?)?\w+)(?:\{([\w.]+)\})?"?=>)?("?(?:\w+"?\."?)?\w+)(?:\{([\w.]+)\})?"?)\."?\w+"?(?=[^\w".{])#m', $match, $table_matches, PREG_SET_ORDER);
 				foreach ($table_matches as $table_match) {
 					
@@ -960,7 +971,7 @@ class fORMDatabase
 					}
 					$table_match[4] = self::cleanTableName($schema, $table_match[4]);
 					
-					if ($db->getType() == 'oracle') {
+					if (in_array($db->getType(), array('oracle', 'db2'))) {
 						foreach (array(2, 3, 4, 5) as $subpattern) {
 							if (isset($table_match[$subpattern])) {
 								$table_match[$subpattern] = strtolower($table_match[$subpattern]);	
@@ -997,19 +1008,10 @@ class fORMDatabase
 						unset($used_aliases[array_search($once_removed_table, $used_aliases)]);
 					
 					// This is a related table
-					} elseif (($table_match[4] != $table || fORMSchema::getRoutes($schema, $table, $table_match[4])) && $table_match[1] != $table) {
+					} elseif (($table_match[4] != $table || fORMSchema::getRoutes($schema, $table, $table_match[4])) && self::cleanTableName($schema, $table_match[1]) != $table) {
 					
 						$related_table = $table_match[4];
 						$route = fORMSchema::getRouteName($schema, $table, $related_table, $table_match[5]);
-						
-						// If the related table is the current table and it is a one-to-many we don't want to join
-						if ($table_match[4] == $table) {
-							$one_to_many_routes = fORMSchema::getRoutes($schema, $table, $related_table, 'one-to-many');
-							if (isset($one_to_many_routes[$route])) {
-								$table_map[$table_match[1]] = $db->escape('%r', $table_alias);
-								continue;
-							}
-						}
 						
 						$join_name = self::createJoin($schema, $table, $table_alias, $related_table, $route, $joins, $used_aliases);
 						
@@ -1026,6 +1028,7 @@ class fORMDatabase
 				continue;
 			}
 			
+			// Many-to-many uses a join table
 			if (substr($name, -5) == '_join') {
 				$joined_to_many = TRUE;
 				break;
@@ -1072,7 +1075,7 @@ class fORMDatabase
 				$temp_sql = preg_replace('#(\{\w+)"\."(\w+\})#', '\1.\2', $match);
 				
 				foreach ($table_map as $arrow_table => $alias) {
-					$temp_sql = str_replace($arrow_table, $alias, $temp_sql);
+					$temp_sql = preg_replace('#(?<![\w"])' . preg_quote($arrow_table, '#') . '(?!=[\w"])#', $alias, $temp_sql);
 				}
 				
 				// In the ORDER BY clause we need to wrap columns in
@@ -1166,7 +1169,7 @@ class fORMDatabase
 			
 			// Trim any punctuation off of the beginning and end of terms
 			} else {
-				$match = preg_replace('#(^[^a-z0-9]+|[^a-z0-9]+$)#iD', '', $match);	
+				$match = preg_replace('#(^[\pC\pC\pM\pP\pS\pZ]+|[\pC\pC\pM\pP\pS\pZ]+$)#iDu', '', $match);	
 			}
 			
 			if ($ignore_stop_words && in_array(strtolower($match), $stop_words)) {
@@ -1215,7 +1218,7 @@ class fORMDatabase
 		
 		if (!isset(self::$database_objects[$database_name])) {
 			throw new fProgrammerException(
-				'The database object named "%s$1" has not been attached via %s$2 yet',
+				'The database object named "%1$s" has not been attached via %2$s yet',
 				$database_name,
 				__CLASS__ . '::attach()'
 			);
@@ -1230,7 +1233,7 @@ class fORMDatabase
 			
 			if (!isset(self::$database_objects[$database_name][$role])) {
 				throw new fProgrammerException(
-					'The database object named "%s$1" for the %2$s role has not been attached via %s$3 yet',
+					'The database object named "%1$s" for the %s$2 role has not been attached via %3$s yet',
 					$database_name,
 					$role,
 					__CLASS__ . '::attach()'
@@ -1285,7 +1288,7 @@ class fORMDatabase
 
 
 /**
- * Copyright (c) 2007-2009 Will Bond <will@flourishlib.com>, others
+ * Copyright (c) 2007-2010 Will Bond <will@flourishlib.com>, others
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal

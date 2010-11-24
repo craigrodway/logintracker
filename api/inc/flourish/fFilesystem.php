@@ -2,15 +2,19 @@
 /**
  * Handles filesystem-level tasks including filesystem transactions and the reference map to keep all fFile and fDirectory objects in sync
  * 
- * @copyright  Copyright (c) 2008-2009 Will Bond, others
+ * @copyright  Copyright (c) 2008-2010 Will Bond, others
  * @author     Will Bond [wb] <will@flourishlib.com>
  * @author     Alex Leeds [al] <alex@kingleeds.com>
+ * @author     Will Bond, iMarc LLC [wb-imarc] <will@imarc.net>
  * @license    http://flourishlib.com/license
  * 
  * @package    Flourish
  * @link       http://flourishlib.com/fFilesystem
  * 
- * @version    1.0.0b12
+ * @version    1.0.0b15
+ * @changes    1.0.0b15  Fixed ::translateToWebPath() to handle Windows \s [wb, 2010-04-09]
+ * @changes    1.0.0b14  Added ::recordAppend() [wb, 2010-03-15]
+ * @changes    1.0.0b13  Changed the way files/directories deleted in a filesystem transaction are handled, including improvements to the exception that is thrown [wb+wb-imarc, 2010-03-05]
  * @changes    1.0.0b12  Updated ::convertToBytes() to properly handle integers without a suffix and sizes with fractions [al+wb, 2009-11-14]
  * @changes    1.0.0b11  Corrected the API documentation for ::getPathInfo() [wb, 2009-09-09]
  * @changes    1.0.0b10  Updated ::updateExceptionMap() to not contain the Exception class parameter hint, allowing NULL to be passed [wb, 2009-08-20]
@@ -34,10 +38,11 @@ class fFilesystem
 	const createObject                  = 'fFilesystem::createObject';
 	const formatFilesize                = 'fFilesystem::formatFilesize';
 	const getPathInfo                   = 'fFilesystem::getPathInfo';
-	const hookExceptionMap              = 'fFilesystem::hookExceptionMap';
+	const hookDeletedMap                = 'fFilesystem::hookDeletedMap';
 	const hookFilenameMap               = 'fFilesystem::hookFilenameMap';
 	const isInsideTransaction           = 'fFilesystem::isInsideTransaction';
 	const makeUniqueName                = 'fFilesystem::makeUniqueName';
+	const recordAppend                  = 'fFilesystem::recordAppend';
 	const recordCreate                  = 'fFilesystem::recordCreate';
 	const recordDelete                  = 'fFilesystem::recordDelete';
 	const recordDuplicate               = 'fFilesystem::recordDuplicate';
@@ -46,7 +51,7 @@ class fFilesystem
 	const reset                         = 'fFilesystem::reset';
 	const rollback                      = 'fFilesystem::rollback';
 	const translateToWebPath            = 'fFilesystem::translateToWebPath';
-	const updateExceptionMap            = 'fFilesystem::updateExceptionMap';
+	const updateDeletedMap              = 'fFilesystem::updateDeletedMap';
 	const updateFilenameMap             = 'fFilesystem::updateFilenameMap';
 	const updateFilenameMapForDirectory = 'fFilesystem::updateFilenameMapForDirectory';
 	
@@ -59,11 +64,11 @@ class fFilesystem
 	static private $commit_operations = NULL;
 	
 	/**
-	 * Maps exceptions to all instances of a file or directory, providing consistency
+	 * Maps deletion backtraces to all instances of a file or directory, providing consistency
 	 * 
 	 * @var array
 	 */
-	static private $exception_map = array();
+	static private $deleted_map = array();
 	
 	/**
 	 * Stores file and directory names by reference, allowing all object instances to be updated at once
@@ -288,22 +293,22 @@ class fFilesystem
 	
 	
 	/**
-	 * Hooks a file/directory into the exception map entry for that filename
+	 * Hooks a file/directory into the deleted backtrace map entry for that filename
 	 * 
 	 * Since the value is returned by reference, all objects that represent
-	 * this file/directory always see the same exception.
+	 * this file/directory always see the same backtrace.
 	 * 
 	 * @internal
 	 * 
 	 * @param  string $file  The name of the file or directory
-	 * @return mixed  Will return `NULL` if no match, or the exception object if a match occurs
+	 * @return mixed  Will return `NULL` if no match, or the backtrace array if a match occurs
 	 */
-	static public function &hookExceptionMap($file)
+	static public function &hookDeletedMap($file)
 	{
-		if (!isset(self::$exception_map[$file])) {
-			self::$exception_map[$file] = NULL;
+		if (!isset(self::$deleted_map[$file])) {
+			self::$deleted_map[$file] = NULL;
 		}
-		return self::$exception_map[$file];
+		return self::$deleted_map[$file];
 	}
 	
 	
@@ -391,17 +396,17 @@ class fFilesystem
 	
 	
 	/**
-	 * Saves an object to the identity map
+	 * Updates the deleted backtrace for a file or directory
 	 * 
 	 * @internal
 	 * 
-	 * @param  string    $file		 A file or directory name, directories should end in `/` or `\`
-	 * @param  Exception $exception  The exception for this file/directory
+	 * @param  string $file		  A file or directory name, directories should end in `/` or `\`
+	 * @param  array  $backtrace  The backtrace for this file/directory
 	 * @return void
 	 */
-	static public function updateExceptionMap($file, $exception)
+	static public function updateDeletedMap($file, $backtrace)
 	{
-		self::$exception_map[$file] = $exception;
+		self::$deleted_map[$file] = $backtrace;
 	}
 	
 	
@@ -420,11 +425,11 @@ class fFilesystem
 			return;
 		}
 		
-		self::$filename_map[$new_filename]  =& self::$filename_map[$existing_filename];
-		self::$exception_map[$new_filename] =& self::$exception_map[$existing_filename];
+		self::$filename_map[$new_filename] =& self::$filename_map[$existing_filename];
+		self::$deleted_map[$new_filename]  =& self::$deleted_map[$existing_filename];
 		
 		unset(self::$filename_map[$existing_filename]);
-		unset(self::$exception_map[$existing_filename]);
+		unset(self::$deleted_map[$existing_filename]);
 		
 		self::$filename_map[$new_filename] = $new_filename;
 	}
@@ -448,11 +453,11 @@ class fFilesystem
 		}
 		
 		// Handle the directory name
-		self::$filename_map[$new_dirname]  =& self::$filename_map[$existing_dirname];
-		self::$exception_map[$new_dirname] =& self::$exception_map[$existing_dirname];
+		self::$filename_map[$new_dirname] =& self::$filename_map[$existing_dirname];
+		self::$deleted_map[$new_dirname]  =& self::$deleted_map[$existing_dirname];
 		
 		unset(self::$filename_map[$existing_dirname]);
-		unset(self::$exception_map[$existing_dirname]);
+		unset(self::$deleted_map[$existing_dirname]);
 		
 		self::$filename_map[$new_dirname] = $new_dirname;
 		
@@ -465,16 +470,35 @@ class fFilesystem
 					$filename
 				);
 				
-				self::$filename_map[$new_filename]  =& self::$filename_map[$filename];
-				self::$exception_map[$new_filename] =& self::$exception_map[$filename];
+				self::$filename_map[$new_filename] =& self::$filename_map[$filename];
+				self::$deleted_map[$new_filename]  =& self::$deleted_map[$filename];
 				
 				unset(self::$filename_map[$filename]);
-				unset(self::$exception_map[$filename]);
+				unset(self::$deleted_map[$filename]);
 				
 				self::$filename_map[$new_filename] = $new_filename;
 					
 			}
 		}
+	}
+	
+	
+	/**
+	 * Stores what data has been added to a file so it can be removed if there is a rollback
+	 * 
+	 * @internal
+	 * 
+	 * @param  fFile  $file  The file that is being written to
+	 * @param  string $data  The data being appended to the file
+	 * @return void
+	 */
+	static public function recordAppend($file, $data)
+	{
+		self::$rollback_operations[] = array(
+			'action'   => 'append',
+			'filename' => $file->getPath(),
+			'length'   => strlen($data)
+		);
 	}
 	
 	
@@ -584,8 +608,10 @@ class fFilesystem
 	static public function reset()
 	{
 		self::rollback();
-		self::$exception_map         = array();
+		self::$commit_operations     = NULL;
+		self::$deleted_map           = array();
 		self::$filename_map          = array();
+		self::$rollback_operations   = NULL;
 		self::$web_path_translations = array();	
 	}
 	
@@ -597,17 +623,29 @@ class fFilesystem
 	 */
 	static public function rollback()
 	{
+		if (self::$rollback_operations === NULL) {
+			return;	
+		}
+		
 		self::$rollback_operations = array_reverse(self::$rollback_operations);
 		
 		foreach (self::$rollback_operations as $operation) {
 			switch($operation['action']) {
 				
+				case 'append':
+					$current_length = filesize($operation['filename']);
+					$handle         = fopen($operation['filename'], 'r+');
+					ftruncate($handle, $current_length - $operation['length']);
+					fclose($handle);
+					break;
+				
 				case 'delete':
-					self::updateExceptionMap(
+					self::updateDeletedMap(
 						$operation['filename'],
-						new fProgrammerException('The action requested can not be performed because the file has been deleted')
+						debug_backtrace()
 					);
 					unlink($operation['filename']);
+					fFilesystem::updateFilenameMap($operation['filename'], '*DELETED at ' . time() . ' with token ' . uniqid('', TRUE) . '* ' . $operation['filename']);
 					break;
 					
 				case 'write':
@@ -622,10 +660,11 @@ class fFilesystem
 			}
 		}
 		
-		// All files to be deleted should have their exceptions erased
+		// All files to be deleted should have their backtraces erased
 		foreach (self::$commit_operations as $operation) {
 			if (isset($operation['object'])) {
-				self::updateExceptionMap($operation['object']->getPath(), NULL);
+				self::updateDeletedMap($operation['object']->getPath(), NULL);
+				fFilesystem::updateFilenameMap($operation['object']->getPath(), preg_replace('#*DELETED at \d+ with token [\w.]+* #', '', $operation['filename']));
 			}
 		}
 		
@@ -652,7 +691,7 @@ class fFilesystem
 			);
 		}
 		
-		return $path;
+		return str_replace('\\', '/', $path);
 	}
 	
 	
@@ -667,7 +706,7 @@ class fFilesystem
 
 
 /**
- * Copyright (c) 2008-2009 Will Bond <will@flourishlib.com>, others
+ * Copyright (c) 2008-2010 Will Bond <will@flourishlib.com>, others
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal

@@ -43,6 +43,7 @@
 			<div class="grid_2 omega"><span class="stat-number" id="stat-today">80</span><br />today</div>
 			<div class="clear"></div>
 			<br />
+			<hr />
 			<h3>Live activity</h3>
 			<div id="activity"></div>
 			

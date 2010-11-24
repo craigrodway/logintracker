@@ -7,7 +7,7 @@
  * method calls for getting, setting and other operations on columns. It also
  * dynamically handles retrieving and storing related records.
  * 
- * @copyright  Copyright (c) 2007-2009 Will Bond, others
+ * @copyright  Copyright (c) 2007-2010 Will Bond, others
  * @author     Will Bond [wb] <will@flourishlib.com>
  * @author     Will Bond, iMarc LLC [wb-imarc] <will@imarc.net>
  * @license    http://flourishlib.com/license
@@ -15,7 +15,24 @@
  * @package    Flourish
  * @link       http://flourishlib.com/fActiveRecord
  * 
- * @version    1.0.0b53
+ * @version    1.0.0b70
+ * @changes    1.0.0b70  Added support for PHP 5.3 namespaced fActiveRecord classes [wb, 2010-11-11]
+ * @changes    1.0.0b69  Backwards Compatibility Break - changed ::validate() to return a nested array of validation messages when there are validation errors on child records [wb-imarc+wb, 2010-10-03]
+ * @changes    1.0.0b68  Added hooks to ::replicate() [wb, 2010-09-07]
+ * @changes    1.0.0b67  Updated code to work with the new fORM API [wb, 2010-08-06]
+ * @changes    1.0.0b66  Fixed a bug with ::store() and non-primary key auto-incrementing columns [wb, 2010-07-05]
+ * @changes    1.0.0b65  Fixed bugs with ::inspect() making some `min_value` and `max_value` elements available for non-numeric types, fixed ::reflect() to list the `min_value` and `max_value` elements [wb, 2010-06-08]
+ * @changes    1.0.0b64  BackwardsCompatibilityBreak - changed ::validate()'s returned messages array to have field name keys - added the option to ::validate() to remove field names from messages [wb, 2010-05-26]
+ * @changes    1.0.0b63  Changed how is_subclass_of() is used to work around a bug in 5.2.x [wb, 2010-04-06]
+ * @changes    1.0.0b62  Fixed a bug that could cause infinite recursion starting in v1.0.0b60 [wb, 2010-04-02]
+ * @changes    1.0.0b61  Fixed issues with handling `populate` actions when working with mapped classes [wb, 2010-03-31]
+ * @changes    1.0.0b60  Fixed issues with handling `associate` and `has` actions when working with mapped classes, added ::validateClass() [wb, 2010-03-30]
+ * @changes    1.0.0b59  Changed an extended UTF-8 arrow character into the correct `->` [wb, 2010-03-29]
+ * @changes    1.0.0b58  Fixed ::reflect() to specify the value returned from `set` methods [wb, 2010-03-15]
+ * @changes    1.0.0b57  Added the `post::loadFromIdentityMap()` hook and fixed ::__construct() to always call the `post::__construct()` hook [wb, 2010-03-14]
+ * @changes    1.0.0b56  Fixed `$force_cascade` in ::delete() to work even when the restricted relationship is once-removed through an unrestricted relationship [wb, 2010-03-09]
+ * @changes    1.0.0b55  Fixed ::load() to that related records are cleared, requiring them to be loaded from the database [wb, 2010-03-04]
+ * @changes    1.0.0b54  Fixed detection of route name for one-to-one relationships in ::delete() [wb, 2010-03-03]
  * @changes    1.0.0b53  Fixed a bug where related records with a primary key that contained a foreign key with an on update cascade clause would be deleted when changing the value of the column referenced by the foreign key [wb, 2009-12-17]
  * @changes    1.0.0b52  Backwards Compatibility Break - Added the $force_cascade parameter to ::delete() and ::store() - enabled calling ::prepare() and ::encode() for non-column get methods, added `::has{RelatedRecords}()` methods [wb, 2009-12-16]
  * @changes    1.0.0b51  Made ::changed() properly recognize that a blank string and NULL are equivalent due to the way that ::set() casts values [wb, 2009-11-14]
@@ -80,6 +97,7 @@ abstract class fActiveRecord
 	const hasOld          = 'fActiveRecord::hasOld';
 	const reset           = 'fActiveRecord::reset';
 	const retrieveOld     = 'fActiveRecord::retrieveOld';
+	const validateClass   = 'fActiveRecord::validateClass';
 	
 	
 	/**
@@ -187,6 +205,27 @@ abstract class fActiveRecord
 		}
 		
 		return $oldest_value != $new_value;	
+	}
+	
+	
+	/**
+	 * Ensures a class extends fActiveRecord
+	 * 
+	 * @internal
+	 * 
+	 * @param  string $class  The class to check
+	 * @return boolean  If the class is an fActiveRecord descendant
+	 */
+	static public function checkClass($class)
+	{
+		if (isset(self::$configured[$class])) {
+			return TRUE;
+		}
+		
+		if (!is_string($class) || !$class || !class_exists($class) || !($class == 'fActiveRecord' || is_subclass_of($class, 'fActiveRecord'))) {
+			return FALSE;
+		}
+		return TRUE;
 	}
 	
 	
@@ -509,6 +548,52 @@ abstract class fActiveRecord
 	
 	
 	/**
+	 * Takes information from a method call and determines the subject, route and if subject was plural
+	 * 
+	 * @param string $class    The class the method was called on
+	 * @param string $subject  An underscore_notation subject - either a singular or plural class name
+	 * @param string $route    The route to the subject
+	 * @return array  An array with the structure: array(0 => $subject, 1 => $route, 2 => $plural)
+	 */
+	static private function determineSubject($class, $subject, $route)
+	{
+		$schema  = fORMSchema::retrieve($class);
+		$table   = fORM::tablize($class);
+		$type    = '*-to-many';
+		$plural  = FALSE;
+		
+		// one-to-many relationships need to use plural forms
+		$singular_form = fGrammar::singularize($subject, TRUE);
+		if ($singular_form && fORM::isClassMappedToTable($singular_form)) {
+			$subject = $singular_form;
+			$plural  = TRUE;
+			
+		} elseif (!fORM::isClassMappedToTable($subject) && in_array(fGrammar::underscorize($subject), $schema->getTables())) {
+			$subject = fGrammar::singularize($subject);
+			$plural  = TRUE;
+		}
+		
+		$related_table = fORM::tablize($subject);
+		$one_to_one    = fORMSchema::isOneToOne($schema, $table, $related_table, $route);
+		if ($one_to_one) {
+			$type = 'one-to-one';
+		}
+		if (($one_to_one && $plural) || (!$plural && !$one_to_one)) {
+			throw new fProgrammerException(
+				'The table %1$s is not in a %2$srelationship with the table %3$s',
+				$table,
+				$type,
+				$related_table
+			); 
+		}
+		
+		$route = fORMSchema::getRouteName($schema, $table, $related_table, $route, $type);
+		
+		return array($subject, $route, $plural);
+	}
+	
+	
+	/**
 	 * Ensures that ::configure() has been called for the class
 	 *
 	 * @internal
@@ -639,6 +724,30 @@ abstract class fActiveRecord
 	
 	
 	/**
+	 * Ensures a class extends fActiveRecord
+	 * 
+	 * @internal
+	 * 
+	 * @param  string $class  The class to verify
+	 * @return void
+	 */
+	static public function validateClass($class)
+	{
+		if (isset(self::$configured[$class])) {
+			return TRUE;
+		}
+		
+		if (!self::checkClass($class)) {
+			throw new fProgrammerException(
+				'The class specified, %1$s, does not appear to be a valid %2$s class',
+				$class,
+				'fActiveRecord'
+			);
+		}
+	}
+	
+	
+	/**
 	 * A data store for caching data related to a record, the structure of this is completely up to the developer using it
 	 * 
 	 * @var array
@@ -730,6 +839,17 @@ abstract class fActiveRecord
 		
 		if (!isset(self::$method_name_cache[$method_name])) {
 			list ($action, $subject) = fORM::parseMethod($method_name);
+			if (in_array($action, array('get', 'encode', 'prepare', 'inspect', 'set'))) {
+				$subject = fGrammar::underscorize($subject);
+			} else {
+				if (in_array($action, array('build', 'count', 'inject', 'link', 'list', 'tally'))) {
+					$subject = fGrammar::singularize($subject);
+				}
+				if (strpos($class, '\\') !== FALSE) {
+					$reflection = new ReflectionClass($class);
+	                $subject = $reflection->getNamespaceName() . '\\' . $subject;
+				}
+			}
 			self::$method_name_cache[$method_name] = array(
 				'action'  => $action,
 				'subject' => $subject
@@ -781,95 +901,40 @@ abstract class fActiveRecord
 					);
 				}
 				
-				$table   = fORM::tablize($class);
 				$records = $parameters[0];
 				$route   = isset($parameters[1]) ? $parameters[1] : NULL;
-				$plural  = FALSE;
 				
-				// one-to-many relationships need to use plural forms
-				$schema = fORMSchema::retrieve($class);
-				if (in_array($subject, $schema->getTables())) {
-					if (fORMSchema::isOneToOne($schema, $table, $subject, $route)) {
-						throw new fProgrammerException(
-							'The table %1$s is not in a %2$srelationship with the table %3$s',
-							$table,
-							'*-to-many ',
-							$subject
-						); 		
-					}
-					$subject = fGrammar::singularize($subject);
-					$plural  = TRUE;
-				}
-				$subject = fGrammar::camelize($subject, TRUE);
+				list ($subject, $route, $plural) = self::determineSubject($class, $subject, $route);
 				
-				// This handles one-to-many and many-to-many relationships
 				if ($plural) {
 					fORMRelated::associateRecords($class, $this->related_records, $subject, $records, $route);
-				
-				// This handles one-to-one relationships
 				} else {
 					fORMRelated::associateRecord($class, $this->related_records, $subject, $records, $route);
 				}
 				return $this;
 			
 			case 'build':
-				$subject = fGrammar::singularize($subject);
-				$subject = fGrammar::camelize($subject, TRUE);
-				
 				if (isset($parameters[0])) {
 					return fORMRelated::buildRecords($class, $this->values, $this->related_records, $subject, $parameters[0]);
 				}
 				return fORMRelated::buildRecords($class, $this->values, $this->related_records, $subject);
 			
 			case 'count':
-				$subject = fGrammar::singularize($subject);
-				$subject = fGrammar::camelize($subject, TRUE);
-				
 				if (isset($parameters[0])) {
 					return fORMRelated::countRecords($class, $this->values, $this->related_records, $subject, $parameters[0]);
 				}
 				return fORMRelated::countRecords($class, $this->values, $this->related_records, $subject);
 			
 			case 'create':
-				$subject = fGrammar::camelize($subject, TRUE);
-				
 				if (isset($parameters[0])) {
 					return fORMRelated::createRecord($class, $this->values, $this->related_records, $subject, $parameters[0]);
 				}
 				return fORMRelated::createRecord($class, $this->values, $this->related_records, $subject);
 				
 			case 'has':
-				$table  = fORM::tablize($class);
-				$route  = isset($parameters[0]) ? $parameters[0] : NULL;
-				$schema = fORMSchema::retrieve($class);
+				$route = isset($parameters[0]) ? $parameters[0] : NULL;
 				
-				// Here the subject will either be a single class name for
-				// one-to-one relationships, or a plural class name for
-				// one-to-* relationships
-				$subject = fGrammar::camelize($subject, TRUE);
-				
-				$related_table = fORM::tablize($subject);
-				
-				// Here, only a non-plural class name will properly tablize,
-				// so if we don't find one matching we can simply singularize
-				if (!in_array($related_table, $schema->getTables())) {
-					$subject = fGrammar::singularize($subject);
-					
-					// This triggers an error if you try to use a plural form
-					// for a one-to-one relationship
-					if (fORMSchema::isOneToOne($schema, $table, $related_table, $route)) {
-						throw new fProgrammerException(
-							'The table %1$s is not in a%2$srelationship with the table %3$s',
-							$table,
-							' one-to-many ',
-							$subject
-						); 		
-					}
-					
-					$route = fORMSchema::getRouteName($schema, $table, fORM::tablize($subject), $route, '*-to-many');
-				} else {
-					$route = fORMSchema::getRouteName($schema, $table, $related_table, $route, 'one-to-one');	
-				}
+				list ($subject, $route, ) = self::determineSubject($class, $subject, $route);
 				
 				return fORMRelated::hasRecords($class, $this->values, $this->related_records, $subject, $route);
 			 
@@ -881,18 +946,12 @@ abstract class fActiveRecord
 					);
 				}
 				
-				$subject = fGrammar::singularize($subject);
-				$subject = fGrammar::camelize($subject, TRUE);
-				 
 				if (isset($parameters[1])) {
 					return fORMRelated::setRecordSet($class, $this->related_records, $subject, $parameters[0], $parameters[1]);
 				}
 				return fORMRelated::setRecordSet($class, $this->related_records, $subject, $parameters[0]);
 
 			case 'link':
-				$subject = fGrammar::singularize($subject);
-				$subject = fGrammar::camelize($subject, TRUE);
-				
 				if (isset($parameters[0])) {
 					fORMRelated::linkRecords($class, $this->related_records, $subject, $parameters[0]);
 				} else {
@@ -901,46 +960,15 @@ abstract class fActiveRecord
 				return $this;
 			
 			case 'list':
-				$subject = fGrammar::singularize($subject);
-				$subject = fGrammar::camelize($subject, TRUE);
-				
 				if (isset($parameters[0])) {
 					return fORMRelated::getPrimaryKeys($class, $this->values, $this->related_records, $subject, $parameters[0]);
 				}
 				return fORMRelated::getPrimaryKeys($class, $this->values, $this->related_records, $subject);
 			
 			case 'populate':
-				$table  = fORM::tablize($class);
-				$route  = isset($parameters[0]) ? $parameters[0] : NULL;
-				$schema = fORMSchema::retrieve($class);
+				$route = isset($parameters[0]) ? $parameters[0] : NULL;
 				
-				// Here the subject will either be a single class name for
-				// one-to-one relationships, or a plural class name for
-				// one-to-* relationships
-				$subject = fGrammar::camelize($subject, TRUE);
-				
-				$related_table = fORM::tablize($subject);
-				
-				// Here, only a non-plural class name will properly tablize,
-				// so if we don't find one matching we can simply singularize
-				if (!in_array($related_table, $schema->getTables())) {
-					$subject = fGrammar::singularize($subject);
-					
-					// This triggers an error if you try to use a plural form
-					// for a one-to-one relationship
-					if (fORMSchema::isOneToOne($schema, $table, $related_table, $route)) {
-						throw new fProgrammerException(
-							'The table %1$s is not in a%2$srelationship with the table %3$s',
-							$table,
-							' one-to-many ',
-							$subject
-						); 		
-					}
-					
-					$route = fORMSchema::getRouteName($schema, $table, fORM::tablize($subject), $route, '*-to-many');
-				} else {
-					$route = fORMSchema::getRouteName($schema, $table, $related_table, $route, 'one-to-one');	
-				}
+				list ($subject, $route, ) = self::determineSubject($class, $subject, $route);
 				
 				fORMRelated::populateRecords($class, $this->related_records, $subject, $route);
 				return $this;
@@ -952,9 +980,6 @@ abstract class fActiveRecord
 						$method_name
 					);
 				}
-				
-				$subject = fGrammar::singularize($subject);
-				$subject = fGrammar::camelize($subject, TRUE);
 				
 				if (isset($parameters[1])) {
 					return fORMRelated::setCount($class, $this->related_records, $subject, $parameters[0], $parameters[1]);
@@ -1046,8 +1071,8 @@ abstract class fActiveRecord
 		
 		// If the features of this class haven't been set yet, do it
 		if (!isset(self::$configured[$class])) {
-			$this->configure();
 			self::$configured[$class] = TRUE;
+			$this->configure();
 			
 			$table = fORM::tablize($class);
 			if (!$schema->getKeys($table, 'primary')) {
@@ -1089,9 +1114,7 @@ abstract class fActiveRecord
 		// Handle loading by a result object passed via the fRecordSet class
 		if ($key instanceof Iterator) {
 			
-			if ($this->loadFromResult($key)) {
-				return;
-			}
+			$this->loadFromResult($key);
 		
 		// Handle loading an object from the database
 		} elseif ($key !== NULL) {
@@ -1125,27 +1148,23 @@ abstract class fActiveRecord
 			if ($is_unique_key) {
 				
 				$result = $this->fetchResultFromUniqueKey($key);
-				if ($this->loadFromResult($result)) {
-					return;	
-				}
+				$this->loadFromResult($result);
 				
 			} else {
 				
 				$hash = self::hash($key, $class);
-				if ($this->loadFromIdentityMap($key, $hash)) {
-					return;
-				}
-				
-				// Assign the primary key values for loading
-				if (is_array($key)) {
-					foreach ($pk_columns as $pk_column) {
-						$this->values[$pk_column] = $key[$pk_column];
+				if (!$this->loadFromIdentityMap($key, $hash)) {
+					// Assign the primary key values for loading
+					if (is_array($key)) {
+						foreach ($pk_columns as $pk_column) {
+							$this->values[$pk_column] = $key[$pk_column];
+						}
+					} else {
+						$this->values[$pk_columns[0]] = $key;
 					}
-				} else {
-					$this->values[$pk_columns[0]] = $key;
+					
+					$this->load();
 				}
-				
-				$this->load();
 			}
 			
 		// Create an empty array for new objects
@@ -1222,11 +1241,9 @@ abstract class fActiveRecord
 	/**
 	 * Creates the fDatabase::translatedQuery() insert statement params
 	 *
-	 * @param  boolean $new_autoincrementing_record  If the record is new and has an auto-incrementing primary key
-	 * @param  string  $pk_column                    The auto-incrementing primary key column for a new record
 	 * @return array  The parameters for an fDatabase::translatedQuery() SQL insert statement
 	 */
-	protected function constructInsertParams($new_autoincrementing_record, $pk_column)
+	protected function constructInsertParams()
 	{
 		$columns = array();
 		$values  = array();
@@ -1239,8 +1256,7 @@ abstract class fActiveRecord
 		$table       = fORM::tablize($class);
 		$column_info = $schema->getColumnInfo($table);
 		foreach ($column_info as $column => $info) {
-			// Most databases don't like the auto incrementing primary key to be set to NULL
-			if ($new_autoincrementing_record && $pk_column == $column && $this->values[$pk_column] === NULL) {
+			if ($schema->getColumnInfo($table, $column, 'auto_increment') && $schema->getColumnInfo($table, $column, 'not_null') && $this->values[$column] === NULL) {
 				continue;
 			}
 			
@@ -1379,11 +1395,14 @@ abstract class fActiveRecord
 			foreach ($relationships as $relationship) {
 				
 				// Figure out how to check for related records
-				$type  = (isset($relationship['join_table'])) ? 'many-to-many' : 'one-to-many';
+				if (isset($relationship['join_table'])) {
+					$type = 'many-to-many';
+				} else {
+					$type = in_array($relationship, $one_to_one_relationships) ? 'one-to-one' : 'one-to-many';
+				}
 				$route = fORMSchema::getRouteNameFromRelationship($type, $relationship);
 				
 				$related_class = fORM::classize($relationship['related_table']);
-				$type          = $type == 'one-to-many' && fORMSchema::isOneToOne($schema, $table, $relationship['related_table'], $route) ? 'one-to-one' : $type;
 				
 				if ($type == 'one-to-one') {
 					$method         = 'create' . $related_class;
@@ -1404,48 +1423,46 @@ abstract class fActiveRecord
 					}
 				}
 				
-				if ($relationship['on_delete'] == 'restrict' || $relationship['on_delete'] == 'no_action') {
+				// If we are focing the cascade we have to delete child records and join table entries before this record
+				if ($force_cascade) {
 					
-					// If we are focing the cascade we have to delete child records and join table entries before this record
-					if ($force_cascade) {
+					if ($type == 'one-to-one') {
+						$related_record->delete($force_cascade);
 						
-						if ($type == 'one-to-one') {
-							$related_record->delete($force_cascade);
-							
-						// For one-to-many we explicitly delete all of the records
-						} elseif ($type == 'one-to-many') {
-							foreach ($record_set as $record) {
-								if ($record->exists()) {
-									$record->delete($force_cascade);
-								}
+					// For one-to-many we explicitly delete all of the records
+					} elseif ($type == 'one-to-many') {
+						foreach ($record_set as $record) {
+							if ($record->exists()) {
+								$record->delete($force_cascade);
 							}
-						
-						// For many-to-many relationships we explicitly delete the join table entries
-						} elseif ($type == 'many-to-many') {
-							$join_column_placeholder = $schema->getColumnInfo($relationship['join_table'], $relationship['join_column'], 'placeholder');
-							$column_get_method       = 'get' . fGrammar::camelize($relationship['column'], TRUE);
-							
-							$db->translatedQuery(
-								$db->escape(
-									'DELETE FROM %r WHERE %r = ',
-									$relationship['join_table'],
-									$relationship['join_column']
-								) . $join_column_placeholder,
-								$this->$column_get_method()
-							);		
 						}
 					
-					// Otherwise we have a restriction and we can to create a nice error message for the user
-					} else {
-						$related_class_name  = fORM::classize($relationship['related_table']);
-						$related_record_name = fORM::getRecordName($related_class_name);
+					// For many-to-many relationships we explicitly delete the join table entries
+					} elseif ($type == 'many-to-many') {
+						$join_column_placeholder = $schema->getColumnInfo($relationship['join_table'], $relationship['join_column'], 'placeholder');
+						$column_get_method       = 'get' . fGrammar::camelize($relationship['column'], TRUE);
 						
-						if ($type == 'one-to-one') {
-							$restriction_messages[] = self::compose("A %s references it", $related_record_name);
-						} else {
-							$related_record_name = fGrammar::pluralize($related_record_name);
-							$restriction_messages[] = self::compose("One or more %s references it", $related_record_name);
-						}
+						$db->translatedQuery(
+							$db->escape(
+								'DELETE FROM %r WHERE %r = ',
+								$relationship['join_table'],
+								$relationship['join_column']
+							) . $join_column_placeholder,
+							$this->$column_get_method()
+						);		
+					}
+				
+				// Otherwise we have a restriction and we can to create a nice error message for the user
+				} elseif ($relationship['on_delete'] == 'restrict' || $relationship['on_delete'] == 'no_action') {
+					
+					$related_class_name  = fORM::classize($relationship['related_table']);
+					$related_record_name = fORM::getRecordName($related_class_name);
+					
+					if ($type == 'one-to-one') {
+						$restriction_messages[] = self::compose("A %s references it", $related_record_name);
+					} else {
+						$related_record_name = fGrammar::pluralize($related_record_name);
+						$restriction_messages[] = self::compose("One or more %s references it", $related_record_name);
 					}
 				}
 			}
@@ -1803,6 +1820,11 @@ abstract class fActiveRecord
 			unset($info['auto_increment']);
 		}
 		
+		if (!in_array($info['type'], array('integer', 'float'))) {
+			unset($info['min_value']);
+			unset($info['max_value']);
+		}
+		
 		$info['feature'] = NULL;
 		
 		fORM::callInspectCallbacks(get_class($this), $column, $info);
@@ -1855,6 +1877,9 @@ abstract class fActiveRecord
 		}
 		
 		$this->loadFromResult($result, TRUE);
+		
+		// Clears the cached related records so they get pulled from the database
+		$this->related_records = array();
 		
 		return $this;
 	}
@@ -1956,6 +1981,16 @@ abstract class fActiveRecord
 		$this->values          = &$object->values;
 		$this->old_values      = &$object->old_values;
 		$this->related_records = &$object->related_records;
+		
+		fORM::callHookCallbacks(
+			$this,
+			'post::loadFromIdentityMap()',
+			$this->values,
+			$this->old_values,
+			$this->related_records,
+			$this->cache
+		);
+		
 		return TRUE;
 	}
 	
@@ -2190,7 +2225,7 @@ abstract class fActiveRecord
 				$signature .= " * Sets the value for " . $column . "\n";
 				$signature .= " * \n";
 				$signature .= " * @param  " . $fixed_type . " \$" . $column . "  The new value\n";
-				$signature .= " * @return void\n";
+				$signature .= " * @return fActiveRecord  The record object, to allow for method chaining\n";
 				$signature .= " */\n";
 			}
 			$set_method = 'set' . $camelized_column;
@@ -2281,6 +2316,8 @@ abstract class fActiveRecord
 				}
 				if ($column_info['type'] == 'integer') {
 					$elements[] = 'auto_increment';
+					$elements[] = 'min_value';
+					$elements[] = 'max_value';
 				}
 				$signature .= " * @param  string \$element  The element to return. Must be one of: '" . join("', '", $elements) . "'.\n";
 				$signature .= " * @return mixed  The metadata array or a single element\n";
@@ -2399,6 +2436,16 @@ abstract class fActiveRecord
 	 */
 	public function replicate($related_class=NULL)
 	{
+		fORM::callHookCallbacks(
+			$this,
+			'pre::replicate()',
+			$this->values,
+			$this->old_values,
+			$this->related_records,
+			$this->cache,
+			fActiveRecord::$replicate_level
+		);
+		
 		fActiveRecord::$replicate_level++;
 		
 		$class  = get_class($this);
@@ -2521,6 +2568,26 @@ abstract class fActiveRecord
 			fActiveRecord::$replicate_map = array();	
 		}
 		
+		fORM::callHookCallbacks(
+			$this,
+			'post::replicate()',
+			$this->values,
+			$this->old_values,
+			$this->related_records,
+			$this->cache,
+			fActiveRecord::$replicate_level
+		);
+		
+		fORM::callHookCallbacks(
+			$clone,
+			'cloned::replicate()',
+			$clone->values,
+			$clone->old_values,
+			$clone->related_records,
+			$clone->cache,
+			fActiveRecord::$replicate_level
+		);
+		
 		return $clone;
 	}
 	
@@ -2640,7 +2707,7 @@ abstract class fActiveRecord
 			// Storing main table
 			
 			if (!$this->exists()) {
-				$params = $this->constructInsertParams($new_autoincrementing_record, $pk_column);
+				$params = $this->constructInsertParams();
 			} else {
 				$params = $this->constructUpdateParams();
 			}
@@ -2660,7 +2727,8 @@ abstract class fActiveRecord
 			$relationships = array_merge($one_to_one_relationships, $one_to_many_relationships);
 			
 			foreach ($relationships as $relationship) {
-				$route = fORMSchema::getRouteNameFromRelationship('one-to-many', $relationship);
+				$type  = in_array($relationship, $one_to_one_relationships) ? 'one-to-one' : 'one-to-many';
+				$route = fORMSchema::getRouteNameFromRelationship($type, $relationship);
 				
 				$related_table = $relationship['related_table'];
 				$related_class = fORM::classize($related_table);
@@ -2698,7 +2766,7 @@ abstract class fActiveRecord
 				}
 			}
 			
-			// Storing *-to-many relationships
+			// Storing *-to-many and one-to-one relationships
 			fORMRelated::store($class, $this->values, $this->related_records, $force_cascade);
 			
 			
@@ -2782,10 +2850,11 @@ abstract class fActiveRecord
 	 * 
 	 * @throws fValidationException  When the record, or one of the associated records, violates one of the validation rules for the class or can not be properly stored in the database
 	 * 
-	 * @param  boolean $return_messages  If an array of validation messages should be returned instead of an exception being thrown
+	 * @param  boolean $return_messages      If an array of validation messages should be returned instead of an exception being thrown
+	 * @param  boolean $remove_column_names  If column names should be removed from the returned messages, leaving just the message itself
 	 * @return void|array  If $return_messages is TRUE, an array of validation messages will be returned
 	 */
-	public function validate($return_messages=FALSE)
+	public function validate($return_messages=FALSE, $remove_column_names=FALSE)
 	{
 		$class = get_class($this);
 		
@@ -2823,12 +2892,13 @@ abstract class fActiveRecord
 			$validation_messages
 		);
 		
-		$validation_messages = array_unique($validation_messages);
-		
 		$validation_messages = fORMValidation::replaceMessages($class, $validation_messages);
 		$validation_messages = fORMValidation::reorderMessages($class, $validation_messages);
 		
 		if ($return_messages) {
+			if ($remove_column_names) {
+				$validation_messages = fValidationException::removeFieldNames($validation_messages);
+			}
 			return $validation_messages;
 		}
 		
@@ -2844,7 +2914,7 @@ abstract class fActiveRecord
 
 
 /**
- * Copyright (c) 2007-2009 Will Bond <will@flourishlib.com>, others
+ * Copyright (c) 2007-2010 Will Bond <will@flourishlib.com>, others
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal

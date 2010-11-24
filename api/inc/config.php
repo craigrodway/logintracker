@@ -15,7 +15,7 @@ define('URL_ROOT', str_replace('\\', '/', substr(DOC_ROOT, strlen(realpath($_SER
 
 // Error reporting
 error_reporting(E_ALL);
-fCore::enableDebugging(TRUE);
+fCore::enableDebugging(FALSE);
 fCore::enableErrorHandling(DOC_ROOT . '/error.log');
 fCore::enableExceptionHandling(DOC_ROOT . '/exceptions.log');
 
