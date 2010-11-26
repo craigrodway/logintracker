@@ -65,7 +65,7 @@ div#side, div#content{
 }
 
 div#side .grid_2{
-	text-align: center;
+	text-align: left;
 }
 
 div#side span.stat-number{

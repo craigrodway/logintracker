@@ -21,6 +21,117 @@
 (function($) {
 	
 	
+	
+	
+	/**
+	 * Functions that the grid relies on
+	 */
+	gridfuncs = {
+		
+		
+		reset: function(com, grid){
+		},
+		
+		
+		filterAlpha: function(com){
+		},
+		
+		
+		/**
+		 * Convert JSON from API into columns for flexigrid.
+		 */
+		convertJSON: function(data){
+			
+			console.log(data);
+			// Create object that Flexigrid understands
+			data2 = { total: data.total, page: data.page, rows: [] };
+			// Iterate login sessions from source data
+			$.each(data.sessions, function(i, session){
+				// Create a row of data for this session
+				var row = { id: session.session_id, cell: [] };
+				// Iterate all of the columns in use
+				$.each(gridconf._current_cols, function(j, col){
+					row.cell.push(session[col.name]);
+				});
+				// Add row to data
+				data2.rows.push(row);
+			});
+			console.log(data2);
+			// Return processed data
+			return data2;
+			
+		}
+		
+
+	}
+	
+	
+	
+	
+	/**
+	 * Various configuration options for grids
+	 */
+	gridconf = {
+		
+		_current_cols: '',
+		
+		cols_current: [
+			{display: 'Username', name: 'username', width: 130, sortable: true, align: 'left'}
+			,{display: 'Computer', name: 'computer', width: 130, sortable: true, align: 'left'}
+			,{display: 'Location', name: 'ou', width: 120, sortable: true, align: 'left'}
+			,{display: 'Login time', name: 'login_time', width: 140, sortable: true, align: 'left'}
+			,{display: 'Session length', name: 'length', width: 150, sortable: true, align: 'left'}
+			,{display: 'Type', name: 'usertype_img', width: 30, sortable: true, align: 'left'}
+		],
+		
+		search_current: [
+			{display: 'Username', name: 'username', isdefault: true}
+			,{display: 'Computer', name: 'computer'}
+			,{display: 'Location', name: 'location'}
+		],
+		
+		tb_main: [
+			{name: 'Reset session', bclass: 'delete', onpress: gridfuncs.reset}
+			,{separator: true}
+		],
+		
+		tb_alpha: [
+			{name: 'Reset session', bclass: 'delete', onpress: gridfuncs.reset}
+			,{separator: true}
+			,{name: 'A', onpress: gridfuncs.filterAlpha}
+			,{name: 'B', onpress: gridfuncs.filterAlpha}
+			,{name: 'C', onpress: gridfuncs.filterAlpha}
+			,{name: 'D', onpress: gridfuncs.filterAlpha}
+			,{name: 'E', onpress: gridfuncs.filterAlpha}
+			,{name: 'F', onpress: gridfuncs.filterAlpha}
+			,{name: 'G', onpress: gridfuncs.filterAlpha}
+			,{name: 'H', onpress: gridfuncs.filterAlpha}
+			,{name: 'I', onpress: gridfuncs.filterAlpha}
+			,{name: 'J', onpress: gridfuncs.filterAlpha}
+			,{name: 'K', onpress: gridfuncs.filterAlpha}
+			,{name: 'L', onpress: gridfuncs.filterAlpha}
+			,{name: 'M', onpress: gridfuncs.filterAlpha}
+			,{name: 'N', onpress: gridfuncs.filterAlpha}
+			,{name: 'O', onpress: gridfuncs.filterAlpha}
+			,{name: 'P', onpress: gridfuncs.filterAlpha}
+			,{name: 'Q', onpress: gridfuncs.filterAlpha}
+			,{name: 'R', onpress: gridfuncs.filterAlpha}
+			,{name: 'S', onpress: gridfuncs.filterAlpha}
+			,{name: 'T', onpress: gridfuncs.filterAlpha}
+			,{name: 'U', onpress: gridfuncs.filterAlpha}
+			,{name: 'V', onpress: gridfuncs.filterAlpha}
+			,{name: 'W', onpress: gridfuncs.filterAlpha}
+			,{name: 'X', onpress: gridfuncs.filterAlpha}
+			,{name: 'Y', onpress: gridfuncs.filterAlpha}
+			,{name: 'Z', onpress: gridfuncs.filterAlpha}
+			,{name: '#', onpress: gridfuncs.filterAlpha}
+		]
+		
+	}
+	
+	
+	
+	
 	/**
 	 * Main Sammy app
 	 */
@@ -49,7 +160,7 @@
 		 */
 		this.get('#/dashboard', function(context) {
 			this.t("Dashboard");
-			context.partial(TPL + "dashboard.html");
+			context.partial(TPL + "dashboard.template");
 		});
 		
 		
@@ -59,9 +170,44 @@
 		 * Current active login sessions
 		 */
 		this.get("#/current/:filter", function(context){
-			var filter = this.params['filter'];
-			this.t("Current logins by: " + filter);
-			$("#content-body").text('');
+			
+			var filter = (this.params['filter']) ? this.params['filter'] : 'all';
+			var title = "All current logins";
+			
+			// Set query based on incoming filter
+			if(filter == "students"){ title = "Current student logins"; }
+			if(filter == "staff"){ title = "Current staff logins"; }
+			
+			this.t(title);
+			
+			context.render(TPL + "current.template")
+				.replace(context.$element())
+				.then(function(){
+					
+					// Set the 'current' column definition to whatever we're using here
+					gridconf._current_cols = gridconf.cols_current;
+					
+					$("#table").flexigrid({
+						url: API + "current.php?filter=" + filter,
+						dataType: 'json',
+						params: { test: "foo" },
+						colModel: gridconf.cols_current,
+						buttons : gridconf.tb_alpha,
+						searchitems : gridconf.search_current,
+						sortname: "login_time",
+						sortorder: "desc",
+						usepager: true,
+						//title: title,
+						useRp: true,
+						rp: 15,
+						rpOptions: [15, 30, 45, 60],
+						showTableToggleBtn: false,
+						showToggleBtn: false,
+						height: "auto"	/*"" + ((20 * this.rp) + 50) + ""*/
+					});		// end of flexigrid()
+					
+				});		// end of context.render().replace().then()
+			
 		});
 		
 		
@@ -221,13 +367,18 @@
 					, dataType: "json"
 					, dataFilter: function(data, type){
 						if(type == "json"){
-							res = eval("(" + data + ")");
+							//res = eval("(" + data + ")");
+							var res = $.parseJSON(data);
 							if(res.status == "err"){
 								showError("An error occurred: " + res.text);
 								return false;
 							} else if(res.status == "warn"){
 								showWarning("Note: " + res.text);
 								return false;
+							}
+							if(res.process != "undefined"){
+								var fn = res.process;
+								return gridfuncs[fn](res);
 							}
 						}
 						return data;

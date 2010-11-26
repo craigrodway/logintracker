@@ -6,6 +6,7 @@ define('DB_NAME', 'logintracker');
 define('DB_USER', 'root');
 define('DB_PASS', '');
 
+define('DATE_FORMAT', 'd/m/Y H:i');
 
 // Paths and URLs
 define('DOC_ROOT', realpath(dirname(__FILE__) . '/../'));
@@ -15,7 +16,7 @@ define('URL_ROOT', str_replace('\\', '/', substr(DOC_ROOT, strlen(realpath($_SER
 
 // Error reporting
 error_reporting(E_ALL);
-fCore::enableDebugging(FALSE);
+fCore::enableDebugging(false);
 fCore::enableErrorHandling(DOC_ROOT . '/error.log');
 fCore::enableExceptionHandling(DOC_ROOT . '/exceptions.log');
 

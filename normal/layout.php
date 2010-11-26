@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="normal/css/text.css" />
 <link rel="stylesheet" href="normal/css/grid.css" />
 <link rel="stylesheet" href="normal/3rdparty/glow/widgets/widget-timetable.css" />
+<link rel="stylesheet" href="normal/3rdparty/flexigrid/css/flexigrid/flexigrid.css" />
 <link rel="stylesheet" href="normal/css/logintracker.css" />
 <link rel="shortcut icon" href="favicon.ico" type="image/x-icon" /> 
 <link rel="icon" href="favicon.ico" type="image/x-icon" /> 

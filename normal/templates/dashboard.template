@@ -33,11 +33,25 @@
 
 <div class="grid_4">
 	<h3 class="block">Computers</h3>
+	<form method="post" action="#/search">
+		<input type="hidden" name="type" value="computer" />
+		<input type="text" name="q" />
+		<button type="submit" class="btn positive" name="find"> 
+			<img src="normal/img/ico/search.png" alt=""/> Find
+		</button> 
+	</form>
 </div>
 
 
 <div class="omega grid_4">
 	<h3 class="block">Locations</h3>
+	<form method="post" action="#/search">
+		<input type="hidden" name="type" value="location" />
+		<input type="text" name="q" />
+		<button type="submit" class="btn positive" name="find"> 
+			<img src="normal/img/ico/search.png" alt=""/> Find
+		</button> 
+	</form>
 </div>
 
 <div class="clear"></div>

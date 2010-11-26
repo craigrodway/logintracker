@@ -26,19 +26,21 @@
 
 include_once('inc/init.php');
 
-
 // Parameters
-$start = fRequest::get('start', 'integer');
-$limit = fRequest::get('limit', 'integer', 25);
-$sort = fRequest::getValid('sort', array('login_time', 'username', 'computer', 'ou', 'usertype'));
-$dir = fRequest::getValid('dir', array('asc', 'desc'));
+#$start = fRequest::get('start', 'integer');
+$page = fRequest::get('page', 'integer', 1);
+$limit = fRequest::get('rp', 'integer', 15);
+$sort = fRequest::getValid('sortname', array('login_time', 'username', 'computer', 'ou', 'usertype'));
+$dir = fRequest::getValid('sortorder', array('asc', 'desc'));
 $duplicates = fRequest::get('duplicates', 'boolean', FALSE);
+$filter = fRequest::getValid('filter', array('all', 'students', 'staff'));
+// SQL start offset based on page number & limit
+$start = ($page - 1) * $limit;
 
 // Search query
-$query = fRequest::get('query', 'string?');
-$query_on = fRequest::getValid('query_on', array(NULL, 'username', 'computer', 'location'));
-$query_value = fRequest::get('query_value', 'string');
-
+#$query = fRequest::get('query', 'string?');
+$query_type = fRequest::getValid('qtype', array(NULL, 'username', 'computer', 'location'));
+$query_value = fRequest::get('query', 'string?');
 
 // Extra HAVING clause if we are filtering for duplicates
 $having = ($duplicates == TRUE) ? 'HAVING user_total > 1' : '';
@@ -46,37 +48,43 @@ $having = ($duplicates == TRUE) ? 'HAVING user_total > 1' : '';
 
 // Search query
 $search = '';
-if( !empty($query) ){
+if( empty($query_type) && !empty($query_value) ){
 	
-	// If general query field is present, search all possible fields for it
+	// If query type field is empty, search all possible fields for it
 	
-	$query = $db->escape('string', "%$query%");
-	#echo $query;
+	$query_value = $db->escape('string', "%$query_value%");
+	$search = " AND (
+		users.username LIKE $query_value OR 
+		hostnames.hostname LIKE $query_value OR
+		ous.name LIKE $query_value
+	) ";
 	
-	$search = "AND (
-		users.username LIKE $query OR 
-		hostnames.hostname LIKE $query OR
-		ous.name LIKE $query
-	)";
-	
-} elseif( !empty($query_on) ){
+} elseif( !empty($query_type) && !empty($query_value) ){
 	
 	// A specific query field is present - search on it only.
 	
 	$query_value = $db->escape('string', "%$query_value%");
-	#echo $query_value;
 	
-	switch($query_on){
+	switch($query_type){
 		case 'username':
-			$search = "AND users.username LIKE $query_value";
+			$search = " AND users.username LIKE $query_value ";
 			break;
 		case 'computer':
-			$search = "AND hostnames.hostname LIKE $query_value";
+			$search = " AND hostnames.hostname LIKE $query_value ";
 			break;
 		case 'location':
-			$search = "AND ous.name LIKE $query_value";
+			$search = " AND ous.name LIKE $query_value ";
 			break;
 	}
+}
+
+
+// Usertype filter applied? Append to existing search query
+if($filter != 'all'){
+	
+	if($filter == 'students'){ $search .= " AND logins.type = 'STUDENT' "; }
+	if($filter == 'staff'){ $search .= " AND logins.type = 'STAFF' "; }
+	
 }
 
 
@@ -126,6 +134,9 @@ try{
 	foreach($sessions as &$row){
 		$logout_time = ($row['logout_time'] = '0000-00-00 00:00:00') ? time() : $row['logout_time'];
 		$row['length'] = timespan($row['login_time'], $row['logout_time']);
+		$row['login_time'] = date(DATE_FORMAT, $row['login_time']);
+		$row['usertype_img'] = '<img src="normal/img/ico/user-' . strtolower($row['usertype']) . '.png" 
+			width="16" height="16" title="' . strtolower($row['usertype']) . '" />';
 	}
 	
 	if($duplicates == TRUE){
@@ -145,6 +156,11 @@ try{
 		$total = $db->query($sql)->fetchRow();
 	}
 	
+	/*$rows = array();
+	foreach($sessions as $session){
+		$rows[] = array('id' => $session['session_id'], 'cell' => $session);
+	}*/
+	
 	// Finally format array as JSON data
 	$json['status'] = 'ok';
 	$json['dupes'] = ($duplicates == TRUE) ? 'yes' : 'no';
@@ -152,26 +168,34 @@ try{
 	$json['sort'] = $sort;
 	$json['dir'] = $dir;
 	$json['sessions'] = $sessions;
+	$json['process'] = 'convertJSON';
+	$json['page'] = $page;
+	
+	fJSON::output($json);
+	exit;
 	
 } catch (fSQLException $e) {
 	
 	$json['status'] = 'err';
 	$json['text'] = "Database error: " . $e->getMessage();
+	fJSON::output($json);
+	exit;
 	
 } catch (fNoRowsException $e) {
 	
 	$json['status'] = 'warn';
 	$json['text'] = 'No results to return';
+	fJSON::output($json);
+	exit;
 	
 } catch (fException $e) {
 	
 	$json['status'] = 'err';
 	$json['text'] = 'Unexpected error: ' . $e->getMessage();
+	fJSON::output($json);
+	exit;
 	
 }
 
-
-fJSON::output($json);
-exit;
 
 /* End of file ./api/current.php */
