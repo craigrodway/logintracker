@@ -160,7 +160,25 @@
 		 */
 		this.get('#/dashboard', function(context) {
 			this.t("Dashboard");
-			context.partial(TPL + "dashboard.template");
+			context.render(TPL + "dashboard.template")
+				.replace(context.$element())
+				.then(function(){
+					/*$("input[data-autocomplete]").each(function(){
+						var el = $(this);
+						el.autocomplete(el.attr("data-autocomplete"), {
+							max: 30,
+							autoFill: true,
+							width: 130,
+							dataType: "json",
+							parse: function(json){
+								var m = $.map(json.results, function(row) {
+									return { data: row, key: row[json.keys.id], value: row[json.keys.name] }
+								});
+								console.log(m);
+							}
+						});
+					});*/
+				});
 		});
 		
 		
@@ -376,10 +394,11 @@
 								showWarning("Note: " + res.text);
 								return false;
 							}
-							if(res.process != "undefined"){
+							if(res.process){
 								var fn = res.process;
 								return gridfuncs[fn](res);
 							}
+							return res;
 						}
 						return data;
 					}
@@ -397,6 +416,7 @@
 			app.$element().append(form);
 			form.submit();			
 		});
+		
 		
 		// Handle search queries from out-of-app search box, and send to main app
 		$('#searchform').bind("submit", function(e){

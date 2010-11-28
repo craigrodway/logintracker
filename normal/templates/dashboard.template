@@ -23,7 +23,7 @@
 	<h3 class="block">Users</h3>
 	<form method="post" action="#/search">
 		<input type="hidden" name="type" value="user" />
-		<input type="text" name="q" />
+		<input type="text" name="q" id="search_user" data-autocomplete="api/list.php?what=users" />
 		<button type="submit" class="btn positive" name="find"> 
 			<img src="normal/img/ico/search.png" alt=""/> Find
 		</button> 
@@ -35,7 +35,7 @@
 	<h3 class="block">Computers</h3>
 	<form method="post" action="#/search">
 		<input type="hidden" name="type" value="computer" />
-		<input type="text" name="q" />
+		<input type="text" name="q" id="search_computer" data-autocomplete="api/list.php?what=computers" />
 		<button type="submit" class="btn positive" name="find"> 
 			<img src="normal/img/ico/search.png" alt=""/> Find
 		</button> 
@@ -47,7 +47,7 @@
 	<h3 class="block">Locations</h3>
 	<form method="post" action="#/search">
 		<input type="hidden" name="type" value="location" />
-		<input type="text" name="q" />
+		<input type="text" name="q" id="search_location" data-autocomplete="api/list.php?what=locations" />
 		<button type="submit" class="btn positive" name="find"> 
 			<img src="normal/img/ico/search.png" alt=""/> Find
 		</button> 
