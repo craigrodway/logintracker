@@ -20,30 +20,23 @@
 
 
 /**
- * Get current login sessions
+ * Search for user/computer/location based on query (include closed and open sessions)
  * Return as JSON data
  */
 
 include_once('inc/init.php');
 
-// Parameters
-#$start = fRequest::get('start', 'integer');
+// General parameters
 $page = fRequest::get('page', 'integer', 1);
 $limit = fRequest::get('rp', 'integer', 15);
 $sort = fRequest::getValid('sortname', array('login_time', 'users.username', 'computer', 'ou', 'usertype'));
 $dir = fRequest::getValid('sortorder', array('asc', 'desc'));
-$duplicates = fRequest::get('duplicates', 'boolean', FALSE);
-$filter = fRequest::getValid('filter', array('all', 'students', 'staff'));
 // SQL start offset based on page number & limit
 $start = ($page - 1) * $limit;
 
 // Search query
-#$query = fRequest::get('query', 'string?');
 $query_type = fRequest::getValid('qtype', array(NULL, 'username', 'computer', 'location'));
 $query_value = fRequest::get('query', 'string?');
-
-// Extra HAVING clause if we are filtering for duplicates
-$having = ($duplicates == TRUE) ? 'HAVING user_total > 1' : '';
 
 
 // Search query
@@ -79,15 +72,6 @@ if( empty($query_type) && !empty($query_value) ){
 }
 
 
-// Usertype filter applied? Append to existing search query
-if($filter != 'all'){
-	
-	if($filter == 'students'){ $search .= " AND logins.type = 'STUDENT' "; }
-	if($filter == 'staff'){ $search .= " AND logins.type = 'STAFF' "; }
-	
-}
-
-
 // Create query
 $sql = "SELECT 
 			logins.session_id, 
@@ -108,9 +92,8 @@ $sql = "SELECT
 		LEFT JOIN hostnames ON logins.hostname_id = hostnames.hostname_id
 		LEFT JOIN ous ON logins.ou_id = ous.ou_id
 		LEFT JOIN users ON logins.user_id = users.user_id
-		WHERE logins.active = 1
+		WHERE logins.active IN (0,1)
 		$search
-		$having
 		ORDER BY %r $dir
 		LIMIT %i, %i";
 
@@ -120,11 +103,6 @@ $sql = $db->escape($sql, array($sort, $start, $limit));
 // Make a copy of the SQL string without limits (for pagination reasons)
 $sql_no_limit = preg_replace('/LIMIT\s([0-9]+),\s([0-9]+)/', '', $sql);
 
-// Remove LIMIT if loading duplicate login list
-if($duplicates == TRUE){
-	$sql = preg_replace('/LIMIT\s([0-9]+),\s([0-9]+)/', '', $sql);
-}
-
 try{
 	
 	// Run the query
@@ -132,15 +110,13 @@ try{
 	
 	// Get session length for each row, update the array
 	foreach($sessions as &$row){
-		$logout_time = ($row['logout_time'] = '0000-00-00 00:00:00') ? time() : $row['logout_time'];
+		$row['logout_time'] = ($row['logout_time'] = '1290991381') ? time() : $row['logout_time'];
 		$row['length'] = timespan($row['login_time'], $row['logout_time']);
 		$row['login_time'] = date(DATE_FORMAT, $row['login_time']);
+		$row['logout_time'] = date(DATE_FORMAT, $row['logout_time']);
 		$row['usertype_img'] = '<img src="normal/img/ico/user-' . strtolower($row['usertype']) . '.png" 
 			width="16" height="16" title="' . strtolower($row['usertype']) . '" />';
-	}
-	
-	if($duplicates == TRUE){
-		$total['total'] = count($sessions);
+		$row['active_img'] = ($row['active'] == 1) ? '<img src="normal/img/ico/active.png" width="16" height="16" title="Logged in" />' : '';
 	}
 	
 	
@@ -152,24 +128,19 @@ try{
 				LEFT JOIN hostnames ON logins.hostname_id = hostnames.hostname_id
 				LEFT JOIN ous ON logins.ou_id = ous.ou_id
 				LEFT JOIN users ON logins.user_id = users.user_id
-				WHERE logins.active = 1 $search";
+				WHERE logins.active IN (0,1) $search";
 		$total = $db->query($sql)->fetchRow();
 	}
 	
-	/*$rows = array();
-	foreach($sessions as $session){
-		$rows[] = array('id' => $session['session_id'], 'cell' => $session);
-	}*/
-	
 	// Finally format array as JSON data
 	$json['status'] = 'ok';
-	$json['dupes'] = ($duplicates == TRUE) ? 'yes' : 'no';
 	$json['total'] = $total['total'];
 	$json['sort'] = $sort;
 	$json['dir'] = $dir;
 	$json['sessions'] = $sessions;
-	$json['process'] = 'convertJSON';
+	#$json['process'] = 'convertJSON';
 	$json['page'] = $page;
+	$json['rp'] = $limit;
 	
 	fJSON::output($json);
 	exit;
@@ -198,4 +169,4 @@ try{
 }
 
 
-/* End of file ./api/current.php */
+/* End of file ./api/search.php */

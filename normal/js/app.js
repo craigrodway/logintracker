@@ -208,7 +208,6 @@
 					$("#table").flexigrid({
 						url: API + "current.php?filter=" + filter,
 						dataType: 'json',
-						params: { test: "foo" },
 						colModel: gridconf.cols_current,
 						buttons : gridconf.tb_alpha,
 						searchitems : gridconf.search_current,
@@ -256,10 +255,23 @@
 		/**
 		 * User page
 		 */
-		this.get("#/user/:username", function(context){
+		this.get("#/user/:username/:page", function(context){
 			var username = this.params['username'];
+			var page = (this.params['page']) ? this.params['page'] : 1;
 			this.t("Search results for user " + username);
 			$("#content-body").text('');
+			$.getJSON(API + "search.php", {
+					sortname: "login_time", 
+					sortorder: "desc", 
+					page: page,
+					rp: 15,
+					qtype: "username",
+					query: username
+				}, function(res){
+				if(res.status == "ok"){
+					context.partial(TPL + "search.template", { data: res });
+				}
+			});
 		});
 		
 		
@@ -317,7 +329,7 @@
 					var m = re.exec(q);
 					if(m != null){
 						// Match - build URI
-						uri = "#/" + regexs[i].type + "/" + m[2];
+						uri = "#/" + regexs[i].type + "/" + m[2] + "/1"
 						// Redirect to page with query
 						this.redirect(uri);
 						return;
@@ -331,7 +343,7 @@
 			} else {
 				
 				// User/Computer/Location was searched for
-				this.redirect("#/" + type + "/" + q);
+				this.redirect("#/" + type + "/" + q + "/1");
 				return;
 				
 			}

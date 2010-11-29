@@ -142,6 +142,20 @@ a.icon{
 
 
 
+table.list{
+	width: 100%;
+}
+
+table.list tr td{
+	padding: 4px 2px;
+	border-bottom: 1px solid #ccc;
+}
+
+tr.stripe0 td{ background: #efefef; }
+tr.stripe1 td{ background: #fff; }
+
+
+
 
 
 /** JBar **/
