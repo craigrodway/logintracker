@@ -259,7 +259,6 @@
 			var username = this.params['username'];
 			var page = (this.params['page']) ? this.params['page'] : 1;
 			this.t("Search results for user " + username);
-			$("#content-body").text('');
 			$.getJSON(API + "search.php", {
 					sortname: "login_time", 
 					sortorder: "desc", 
